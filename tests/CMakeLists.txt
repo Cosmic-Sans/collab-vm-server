@@ -1,0 +1,26 @@
+enable_testing()
+
+add_executable(recaptcha Recaptcha.cpp)
+target_include_directories(recaptcha PUBLIC ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${PROJECT_SOURCE_DIR}/submodules/beast/include ${Boost_INCLUDE_DIRS})
+target_link_libraries(recaptcha ${OPENSSL_LIBRARIES} ${BOOST_LINK_LIBS})
+add_test(recaptcha recaptcha)
+
+add_executable(totp Totp.cpp)
+target_include_directories(totp PUBLIC ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/submodules/GSL/include)
+target_link_libraries(totp ${OPENSSL_LIBRARIES})
+add_test(totp totp)
+
+#add_definitions(${CAPNP_DEFINITIONS})
+#add_executable(capnp-test capnp.cpp ${CAPNP_SRCS} ${CAPNP_HDRS})
+#target_include_directories(capnp-test PUBLIC ${PROJECT_SOURCE_DIR} ${CAPNPROTO_ROOT}/include)
+#target_link_libraries(capnp-test CapnProto::capnp)
+#add_test(capnp-test capnp-test)
+
+add_executable(guac-test Guacamole.cpp)
+target_include_directories(guac-test PUBLIC ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR} ${FREERDP_INCLUDE_DIRS} ${GUACAMOLE_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/submodules/GSL/include)
+target_link_libraries(guac-test ${Boost_LIBRARIES} CapnProto::capnp ${FREERDP_LIBRARIES} guacamole)
+add_test(guac-test guac-test)
+add_dependencies(guac-test guacamole)
+add_dependencies(guac-test FreeRDP)
+copy_freerdp_dlls(guac-test)
+copy_cairo_dlls(guac-test)

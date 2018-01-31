@@ -1,0 +1,11 @@
+<changelog xmlns="http://www.codesynthesis.com/xmlns/odb/changelog" database="sqlite" version="1">
+  <model version="1">
+    <table name="ServerConfig" kind="object">
+      <column name="ID" type="INTEGER" null="false"/>
+      <column name="Setting" type="BLOB" null="false"/>
+      <primary-key>
+        <column name="ID"/>
+      </primary-key>
+    </table>
+  </model>
+</changelog>
