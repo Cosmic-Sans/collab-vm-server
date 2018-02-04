@@ -1,7 +1,12 @@
 # collab-vm-server
 
+This repository contains the necessary files to compile the collab-vm-server. collab-vm-server powers CollabVM and it is what you will use to host it. Compilation instructions are below.
+
+Please note that this is currently an incomplete project. This may not build properly, and it does not have full functionality yet. Please use [this](https://github.com/computernewb/collab-vm-server) repository to build/use the current stable version of collab-vm-server.
+
 ## Building on Windows
 
+### Visual Studio
 Requirements:
 * Visual Studio 2017 (any edition)
 	* Make sure to install the "Desktop development with C++" workload and the "Visual C++ tools for CMake" component
@@ -53,3 +58,9 @@ Or if you've already cloned it, you can download only the submodules by doing:
 	...
 	```
 1. Verify the correct configuration is selected in the dropdown (e.g. x86-Debug) and build the solution.
+
+## Building on Linux
+To be written
+
+## Building on anything else
+It is currently unknown if this project compiles on any other operating systems. The main focus is Windows and Linux. However, if you can successfully get the collab-vm-server to build on another OS (e.g. MacOS, FreeBSD) then please make a pull request with instructions.
