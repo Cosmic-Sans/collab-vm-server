@@ -29,7 +29,7 @@ inline int GenerateTotp(
   const int offset = digest[SHA_DIGEST_LENGTH - 1] & lowest_4_bits;
   constexpr unsigned long lowest_31_bits = (1 << 31) - 1;
   const int binary = boost::endian::endian_reverse(
-                         *reinterpret_cast<const int*>(digest[offset])) &
+                         *reinterpret_cast<const int*>(&digest[offset])) &
                      lowest_31_bits;
   return binary % static_cast<int>(std::pow(10, digits));
 }

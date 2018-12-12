@@ -32,7 +32,6 @@ class CollabVmChatRoom {
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count();
-    capnp::MallocMessageBuilder message_builder;
     channel_chat_message.setChannel(id_);
     auto chat_message = channel_chat_message.initMessage();
     chat_message.setMessage(message);
@@ -50,18 +49,14 @@ class CollabVmChatRoom {
     return history_message_builder_;
   }
 
- std::vector<std::shared_ptr<TClient>>& GetClients() {
-   return clients_;
+  // capnp::List<CollabVmServerMessage::ChatMessage>::Builder& GetChatHistory() const {
+  const capnp::List<CollabVmServerMessage::ChatMessage>::Reader GetChatHistory() const {
+    return chat_message_history_.asReader();
   }
 
-  capnp::List<CollabVmServerMessage::ChatMessage>::Builder& GetChatHistory() {
-    return chat_message_history_;
+  std::uint32_t GetId() const {
+    return id_;
   }
-
-  void AddClient(const std::shared_ptr<TClient>& client) {
-        clients_.emplace_back(client);
-  }
-
   /*
    * VmController vm_;
    * ChatMessages chat_msgs_;
@@ -73,6 +68,5 @@ class CollabVmChatRoom {
   capnp::MallocMessageBuilder history_message_builder_;
   capnp::List<CollabVmServerMessage::ChatMessage>::Builder
       chat_message_history_;
-  std::vector<std::shared_ptr<TClient>> clients_;
 };
 }  // namespace CollabVmServer

@@ -1,19 +1,7 @@
 cmake_minimum_required(VERSION 3.7)
 
-if(MSVC)
-set(HUNTER_ENABLED_DEFAULT OFF)
-else()
-set(HUNTER_ENABLED_DEFAULT ON)
-endif()
-option(HUNTER_ENABLED "Enable Hunter package manager" HUNTER_ENABLED_DEFAULT)
-
-include("cmake/HunterGate.cmake")
-
-HunterGate(
-	URL "https://github.com/ruslo/hunter/archive/v0.19.57.tar.gz"
-	SHA1 "f83ea762f0609c48a583d0e877a6358f6fbfe0d7"
-	FILEPATH "${CMAKE_CURRENT_LIST_DIR}/${CMAKE_CONFIG}"
-)
+set(COLLAB_VM_COMMON "submodules/collab-vm-common" CACHE PATH "Path to collab-vm-common directory")
+set(COLLAB_VM_COMMON_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/submodules/collab-vm-common" CACHE PATH "Path to output collab-vm-common binaries")
 
 project(collab-vm-server VERSION 2.0.0)
 
@@ -32,48 +20,39 @@ endforeach()
 
 add_library(argon2 STATIC ${ARGON2_SOURCES})
 if(MSVC)
-# TODO: Find a better way to prevent the argon2 functions from being exported with MVSC
-set_target_properties(argon2 PROPERTIES COMPILE_FLAGS -Ddllexport)
+	# TODO: Find a better way to prevent the argon2 functions from being exported with MVSC
+	#set_target_properties(argon2 PROPERTIES COMPILE_FLAGS -Ddllexport)
+	# The MSVC equivalient of -isystem is /external:I
+	set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "/external:I ")
+	# Suppress all warnings for external headers
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /experimental:external /external:W0")
+	#target_compile_options(${PROJECT_NAME} PRIVATE /experimental:external /external:W0)
 endif()
 target_include_directories(argon2 PUBLIC ${ARGON2_INCLUDE_DIR})
 
-hunter_add_package(OpenSSL)
 find_package(OpenSSL REQUIRED)
 
-hunter_add_package(SQLite3)
 set(SQLite3_DIR "${SQLITE3_VCPKG}/share/sqlite3")
 find_package(SQLite3 REQUIRED CONFIG)
 
-if(HUNTER_ENABLED)
-	hunter_add_package(odb-compiler)
-	hunter_add_package(odb-sqlite)
-	set(ODB_COMPONENTS sqlite)
-else()
-	set(ODB_COMPONENTS libodb sqlite)
-endif()
+set(ODB_COMPONENTS libodb sqlite)
 find_package(odb REQUIRED CONFIG COMPONENTS ${ODB_COMPONENTS})
 set(${PROJECT_NAME}_ODB_HEADERS "${CMAKE_SOURCE_DIR}/Database/User.h" "${CMAKE_SOURCE_DIR}/Database/VmConfig.h" "${CMAKE_SOURCE_DIR}/Database/ServerConfig.h")
 
-hunter_add_package(CapnProto)
-set(BUILD_TESTING OFF)
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /MTd")
-add_subdirectory(submodules/capnproto/c++)
-add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
+#set(BUILD_TESTING OFF)
+#set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
+#set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
+#set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /MTd")
+#add_subdirectory(submodules/capnproto/c++)
 
 # NOTE: The Cap'n Proto compiler doesn't generate files to the correct directory
 #set(CAPNPC_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
-capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS submodules/collab-vm-shared/CollabVm.capnp)
+#capnp_generate_cpp(CAPNP_SRCS CAPNP_HDRS submodules/collab-vm-common/CollabVm.capnp)
+add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
+add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
 set(BOOST_COMPONENTS system filesystem program_options date_time)
-if (HUNTER_ENABLED)
-	string(REPLACE ";" ";Boost::" Boost_LIBRARIES ";${BOOST_COMPONENTS}")
-	hunter_add_package(Boost COMPONENTS ${BOOST_COMPONENTS})
-	find_package(Boost 1.66 REQUIRED CONFIG COMPONENTS ${BOOST_COMPONENTS})
-else()
-	find_package(Boost 1.66 REQUIRED COMPONENTS ${BOOST_COMPONENTS})
-endif()
+find_package(Boost 1.66 REQUIRED COMPONENTS system filesystem program_options date_time)
 add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
@@ -116,15 +95,6 @@ function(copy_cairo_dlls TARGET)
 	endif()
 endfunction()
 
-if(HUNTER_ENABLED AND MSVC AND ${CMAKE_BUILD_TYPE} MATCHES "Debug|RelWithDebInfo")
-	add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-		# TODO: Get lib paths path correctly
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SQLITE3_VCPKG}/debug/bin/sqlite3.dll" "${${PROJECT_NAME}_BINARY_DIR}"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ODB_VCPKG}/debug/bin/libodb.dll" "${${PROJECT_NAME}_BINARY_DIR}"
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ODB_VCPKG}/debug/bin/libodb-sqlite.dll" "${${PROJECT_NAME}_BINARY_DIR}"
-	)
-endif()
-
 include(cmake/Findodb-compiler.cmake)
 set(ODB_COMPILE_OUTPUT_DIR "${CMAKE_BINARY_DIR}")
 odb_compile(
@@ -150,6 +120,7 @@ set(external_cxx_flags -DCMAKE_CXX_FLAGS_DEBUG=/MDd -DCMAKE_C_FLAGS_RELEASE=/MT 
 set(LIBVNCSERVER_INSTALL_DIR ${CMAKE_BINARY_DIR}/libvncserver)
 include(ExternalProject)
 set(LIBVNCSERVER_LIBRARIES ${LIBVNCSERVER_INSTALL_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}vncclient${CMAKE_STATIC_LIBRARY_SUFFIX})
+set(LIBVNCSERVER_INCLUDE_DIRS ${LIBVNCSERVER_INSTALL_DIR}/include)
 ExternalProject_Add(libvncserver SOURCE_DIR "${CMAKE_SOURCE_DIR}/submodules/libvncserver"
 	CMAKE_ARGS
 		"-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
@@ -197,15 +168,15 @@ set(FREERDP_INCLUDE_DIRS
 find_package(JPEG REQUIRED)
 
 set(GUACAMOLE_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/submodules/guacamole-server)
-file(GLOB GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/common/*.c ${GUACAMOLE_ROOT_DIR}/src/libguac/timestamp.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/_generated_keymaps.c ${GUACAMOLE_ROOT_DIR}/src/libguac/protocol.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/user-handlers.cpp)
-list(REMOVE_ITEM GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/common/recording.c ${GUACAMOLE_ROOT_DIR}/src/libguac/id.c ${GUACAMOLE_ROOT_DIR}/src/libguac/encode-webp.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_fs.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/audio_input.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_print_job.c)
-capnp_generate_cpp(GUAC_CAPNP_SRCS GUAC_CAPNP_HDRS submodules/collab-vm-shared/Guacamole.capnp)
+file(GLOB GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/common/*.c ${GUACAMOLE_ROOT_DIR}/src/libguac/timestamp.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/guac_rdpsnd/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/_generated_keymaps.c ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/*.c ${GUACAMOLE_ROOT_DIR}/src/libguac/protocol.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/user-handlers.cpp)
+list(REMOVE_ITEM GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/libguac/id.c ${GUACAMOLE_ROOT_DIR}/src/libguac/encode-webp.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_fs.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/audio_input.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_print_job.c ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/sftp.c)
 add_library(guacamole ${GUACAMOLE_SOURCES} ${GUAC_CAPNP_SRCS})
-target_link_libraries(guacamole CapnProto::capnp ${CAIRO_LIBRARY} PNG::PNG ${JPEG_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(guacamole CapnProto::capnp ${CAIRO_LIBRARY} collab-vm-common PNG::PNG ${JPEG_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto)
 add_dependencies(guacamole FreeRDP)
+add_dependencies(guacamole libvncserver)
 set(GUACAMOLE_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/common" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac/guacamole" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src" ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp)
 target_compile_definitions(guacamole PRIVATE -DENABLE_WINPR)
-target_include_directories(guacamole PUBLIC ${CMAKE_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/submodules/collab-vm-shared ${GUACAMOLE_INCLUDE_DIRS} ${FREERDP_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
+target_include_directories(guacamole PUBLIC ${GUACAMOLE_INCLUDE_DIRS} ${FREERDP_INCLUDE_DIRS} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
 if (MSVC)
 	find_path(PTHREADS_INCLUDE_DIR pthread)
 	if(PTHREADS_INCLUDE_DIR-NOTFOUND)
@@ -219,15 +190,14 @@ if (MSVC)
 	target_include_directories(guacamole PUBLIC PTHREADS_INCLUDE_DIR ${GUACAMOLE_ROOT_DIR}/src/win-compat)
 endif()
 add_dependencies(guacamole FreeRDP)
-#add_subdirectory(submodules/guacamole-server/src/protocols/rdp/guac_rdpsnd)
 #add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "oss" "")
 
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
 	${FREERDP_INCLUDE_DIRS}
-	${LIBVNCSERVER_INSTALL_DIR}/include
-	${CMAKE_CURRENT_BINARY_DIR}/submodules/collab-vm-shared submodules/collab-vm-shared ${OPENSSL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/submodules/GSL/include ${Boost_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIR} ${ARGON2_INCLUDE_DIR})
+	${LIBVNCSERVER_INCLUDE_DIRS}
+	${COLLAB_VM_COMMON} ${OPENSSL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/submodules/GSL/include ${Boost_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIR} ${ARGON2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME}
-	argon2 ${Boost_LIBRARIES} ${CAIRO_LIBRARY} CapnProto::capnp 
+	argon2 ${Boost_LIBRARIES} ${CAIRO_LIBRARY} CapnProto::capnp collab-vm-common
 	${FREERDP_LIBRARIES} guacamole ${LIBVNCSERVER_LIBRARIES} OpenSSL::Crypto OpenSSL::SSL
 	odb::libodb odb::libodb-sqlite sqlite3)
 

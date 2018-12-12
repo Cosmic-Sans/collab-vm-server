@@ -1,3 +1,9 @@
+#include "GuacClient.hpp"
+#ifdef WIN32
+#undef CONST
+#undef min
+#undef max
+#endif
 #include <argon2.h>
 #include <openssl/opensslv.h>
 #include <sqlite3.h>
@@ -6,12 +12,11 @@
 #include <iostream>
 #include <odb/version.hxx>
 #include <string>
+#include <algorithm>
 #include <thread>
-#include <rfb/rfbclient.h>
-#undef min
-#undef max
+#include <rfb/rfbconfig.h>
 #include <freerdp/api.h>
-#define FREERDP_API
+// #define FREERDP_API
 #include <freerdp/freerdp.h>
 #include <cairo/cairo.h>
 
@@ -36,17 +41,15 @@ int main(const int argc, const char* argv[]) {
   namespace po = boost::program_options;
 
   po::options_description desc("Options");
-  desc.add_options()("help,h", "display help message")("version,v",
-                                                       "display version")(
-      "host,h", po::value<std::string>()->default_value("localhost"),
-      "ip or host to listen on")("port,p",
-                                 po::value<uint16_t>()->default_value(80))(
-      "root,r", po::value<std::string>()->default_value("."),
-      "the root directory to serve files from")(
-      "cert,c", po::value<std::string>(), "PEM certificate to use for SSL/TLS")(
-      "no-autostart,n", "don't automatically start any VMs")(
-      "threads,t", po::value<std::uint32_t>()->default_value(0, "number of cores"),
-      "the number of threads the server will use");
+  desc.add_options()
+    ("help,h", "display help message")
+    ("version,v", "display version")
+    ("host,h", po::value<std::string>()->default_value("localhost"), "ip or host to listen on")
+    ("port,p", po::value<uint16_t>()->default_value(80))
+    ("root,r", po::value<std::string>()->default_value("."), "the root directory to serve files from")
+    ("cert,c", po::value<std::string>(), "PEM certificate to use for SSL/TLS")
+    ("no-autostart,n", "don't automatically start any VMs")
+    ("threads,t", po::value<std::uint32_t>()->default_value(0, "number of cores"), "the number of threads the server will use");
 
   po::variables_map vars;
   try {
@@ -64,17 +67,18 @@ int main(const int argc, const char* argv[]) {
     if (vars.count("version")) {
       std::cout << "collab-vm-server " BOOST_STRINGIZE(PROJECT_VERSION) "\n\n"
         "Third-Party Libraries:\n"
-//        "Argon2 " ARGON2_VERSION_NUMBER "\n"
-        "Beast " BOOST_STRINGIZE(BOOST_BEAST_VERSION) "\n"
+        "Argon2 " << ARGON2_VERSION_NUMBER << "\n"
         "Boost " << BOOST_VERSION / 100000 << '.'
           << BOOST_VERSION / 100 % 1000 << '.'
           << BOOST_VERSION % 100 << "\n"
 				"cairo " << cairo_version_string() << "\n"
         "Cap'n Proto " BOOST_STRINGIZE(CAPNP_VERSION_STR) "\n"
 				"FreeRDP " << freerdp_get_version_string() << "\n"
+        "Guacamole (patched)" "\n"
+				LIBVNCSERVER_PACKAGE_STRING "\n"
         "ODB " LIBODB_VERSION_STR "\n"
         "OpenSSL " OPENSSL_VERSION_TEXT "\n"
-        "SQLite3 " << SQLITE_VERSION << '\n' << std::endl;
+        "SQLite3 " SQLITE_VERSION "\n" << std::endl;
       return 0;
     }
 
@@ -86,15 +90,16 @@ int main(const int argc, const char* argv[]) {
     std::cerr << e.what() << std::endl;
     return 1;
   }
-  std::string host = vars["host"].as<std::string>();
-  std::uint16_t port = vars["port"].as<std::uint16_t>();
-  std::string root = vars["root"].as<std::string>();
+  const auto host = vars["host"].as<std::string>();
+  const auto port = vars["port"].as<std::uint16_t>();
+  const auto root = vars["root"].as<std::string>();
   auto threads = vars["threads"].as<std::uint32_t>();
 
   if (!threads) {
 		const auto cores = std::thread::hardware_concurrency();
-		// Use half the cores, so the hypervisor can use some
-	  threads = cores > 2 ? cores / 2 : 1;
+		// Use half the cores so the remaining can be used by
+    // the hypervisor and Guacamole client threads
+	  threads = std::max(cores / 2, 1u);
   }
 
   const auto auto_start = !vars.count("no-autostart");

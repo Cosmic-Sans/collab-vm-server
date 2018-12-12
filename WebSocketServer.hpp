@@ -1,5 +1,4 @@
 #pragma once
-#include <boost/variant.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/asio.hpp>
 #include <boost/beast/core.hpp>
@@ -17,7 +16,7 @@
 #include <list>
 #include "StrandGuard.hpp"
 #include "fields_alloc.hpp"
-#include "file_body.hpp"
+// #include "file_body.hpp"
 
 namespace CollabVm::Server {
 namespace asio = boost::asio;
@@ -34,6 +33,8 @@ class WebServerSocket : public std::enable_shared_from_this<
                           std::chrono::steady_clock::time_point::max()),
         alloc_(8192),
         doc_root_(doc_root) {}
+
+  virtual ~WebServerSocket() = default;
 
   void Start() {
     socket_.dispatch([ this,
@@ -146,12 +147,12 @@ class WebServerSocket : public std::enable_shared_from_this<
                       resp.prepare_payload();
                       response_ = std::move(resp);
 
-                      serializer_.emplace<2>(
+                      serializer_.emplace<beast::http::response_serializer<beast::http::file_body>>(
                           std::get<beast::http::response<
 	                          beast::http::file_body>>(response_));
                       beast::http::async_write(
                           sockets.socket,
-                          serializer_.get<2>(),
+                          std::get<beast::http::response_serializer<beast::http::file_body>>(serializer_),
                           socket_.wrap([ this, self = std::move(self) ](
                               auto& sockets,
                               const boost::system::error_code& ec,
@@ -183,12 +184,12 @@ class WebServerSocket : public std::enable_shared_from_this<
               resp.prepare_payload();
               response_ = std::move(resp);
 
-              serializer_.emplace<1>(
+              serializer_.emplace<beast::http::response_serializer<beast::http::string_body>>(
                     std::get<beast::http::response<beast::http::string_body>>(
                         response_));
               beast::http::async_write(
                   sockets.socket,
-                  serializer_.get<1>(),
+                  std::get<beast::http::response_serializer<beast::http::string_body>>(serializer_),
                   socket_.wrap([ this, self = std::move(self) ](
                       auto& sockets, const boost::system::error_code& ec,
                       std::size_t bytes_transferred) mutable {
@@ -200,7 +201,7 @@ class WebServerSocket : public std::enable_shared_from_this<
               return;
             } else if (request.method() == beast::http::verb::post) {
               // File uploads
-              // RFC 2616 ง 8.2.2 requires clients to stop sending a message
+              // RFC 2616 ยง 8.2.2 requires clients to stop sending a message
               // body when an error response is received, but most browsers
               // don't comply with it
               if (request.target() == "/upload") {
@@ -232,12 +233,12 @@ class WebServerSocket : public std::enable_shared_from_this<
             resp.prepare_payload();
             response_ = std::move(resp);
 
-            serializer_.emplace<1>(
+            serializer_.emplace<beast::http::response_serializer<beast::http::string_body>>(
                     std::get<beast::http::response<beast::http::string_body>>(
                         response_));
             beast::http::async_write(
                 sockets.socket,
-                serializer_.get<1>(),
+                std::get<beast::http::response_serializer<beast::http::string_body>>(serializer_),
                 socket_.wrap([ this, self = std::move(self) ](
                     auto& sockets, const boost::system::error_code& ec,
                     std::size_t bytes_transferred) mutable {
@@ -300,6 +301,7 @@ class WebServerSocket : public std::enable_shared_from_this<
       sockets.socket.close(ec);
       if (close_callback_) {
         close_callback_();
+        close_callback_ = nullptr;
       }
     });
   }
@@ -419,7 +421,7 @@ class WebServerSocket : public std::enable_shared_from_this<
       std::shared_ptr<beast::flat_static_buffer_base>&& buffer) = 0;
   virtual void OnDisconnect() = 0;
   //  asio::ip::tcp::socket socket_;
-  using strand = typename TThreadPool::strand;
+  using strand = typename TThreadPool::Strand;
 
  private:
   struct SocketsWrapper {
@@ -430,7 +432,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     beast::websocket::stream<asio::ip::tcp::socket&> websocket;
   };
   StrandGuard<strand, SocketsWrapper> socket_;
-  //  typedef typename TThreadPool::strand strand;
+  //  typedef typename TThreadPool::Strand Strand;
 
   beast::flat_static_buffer<8192> buffer_;
 
@@ -440,8 +442,8 @@ class WebServerSocket : public std::enable_shared_from_this<
                beast::http::response<beast::http::file_body>>
       response_;
 
-  // NOTE: Using std::variant with response_serializer doesn't compile with MSVC
-  boost::beast::detail::variant<
+  std::variant<
+      std::monostate,
       beast::http::response_serializer<beast::http::string_body>,
       beast::http::response_serializer<beast::http::file_body>>
       serializer_;
@@ -454,7 +456,7 @@ class WebServerSocket : public std::enable_shared_from_this<
       parser_;
 
   //  beast::websocket::stream<asio::ip::tcp::socket&> websocket_;
-  //  typename StrandGuard<strand,
+  //  typename StrandGuard<Strand,
   //  beast::websocket::stream<asio::ip::tcp::socket&>>::SharedStrandGuard
   //  websocket_;
 
@@ -495,7 +497,7 @@ struct ThreadPool {
     asio::io_context& io_context_;
   };
 
-  using strand = NullStrand;
+  using Strand = NullStrand;
 
  protected:
   void RunWorkers() { io_context_.run(); }
@@ -506,7 +508,7 @@ template <>
 struct ThreadPool<false> {
   explicit ThreadPool(unsigned long threads)
       : io_context_(threads), thread_count_(threads) {}
-  using strand = asio::io_context::strand;
+  using Strand = asio::io_context::strand;
 
  protected:
   void RunWorkers() {
@@ -639,7 +641,6 @@ class WebServer : public TThreadPool {
           [this, socket_it] { RemoveSocket(socket_it); });
 
       socket_ptr->GetSocket([this, socket_ptr](auto& socket) {
-        boost::system::error_code ec;
         acceptor_.async_accept(
             socket,
             [this, socket_ptr](const boost::system::error_code& ec) {
@@ -649,14 +650,8 @@ class WebServer : public TThreadPool {
               }
               socket_ptr->Start();
               DoAccept();
-            },
-            ec);
-        if (ec) {
-          std::cout << "async_accept failed: " << ec.message() << std::endl;
-          Stop();
-        }
+            });
       });
-
     });
   }
 
@@ -670,11 +665,11 @@ class WebServer : public TThreadPool {
   }
 
   bool stopping_;
-  StrandGuard<typename TThreadPool::strand, std::list<std::shared_ptr<TSocket>>>
+  StrandGuard<typename TThreadPool::Strand, std::list<std::shared_ptr<TSocket>>>
       sockets_;
 
   asio::ip::tcp::acceptor acceptor_;
-  //  typename TThreadPool::strand sockets_strand_;
+  //  typename TThreadPool::Strand sockets_strand_;
   boost::filesystem::path doc_root_;
   asio::signal_set interrupt_signal_;
 };

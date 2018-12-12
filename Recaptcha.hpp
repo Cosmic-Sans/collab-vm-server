@@ -114,10 +114,8 @@ class RecaptchaVerifier {
                 }
 
                 {
-                  boost::iostreams::stream<boost::iostreams::array_source>
-                      str_stream(res_.body().c_str(), res_.body().length());
                   boost::property_tree::ptree pt;
-                  boost::property_tree::read_json(str_stream, pt);
+                  boost::property_tree::read_json(res_.body(), pt);
                   request_->callback_(pt.get<bool>("success"));
                 }
                 // Destruct and reconstruct the response in preparation

@@ -99,28 +99,53 @@ class Database {
 
   template <typename It>
   std::uint32_t CreateVm(It begin, It end) {
-    if (begin == end) {
-      return 0;
-    }
+    capnp::MallocMessageBuilder message_builder;
+    auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
     odb::transaction transaction(db_.begin());
-		const auto vm_id = db_.query_value<NewVmId>().Id;
-    auto vm_config = ConvertToVmSetting(vm_id, (begin++)->getSetting());
-    db_.persist(vm_config);
-    for (; begin != end; begin++) {
-      vm_config = ConvertToVmSetting(vm_id, begin->getSetting());
-      db_.persist(vm_config);
+    const auto vm_id = db_.query_value<NewVmId>().Id;
+    for (auto i = 0u; i < fields.size(); i++) {
+      while (begin != end && begin->getSetting().which() < i)
+      {
+        begin++;
+      }
+      if (begin != end && begin->getSetting().which() == i)
+      {
+        auto vm_config = ConvertToVmSetting(vm_id, begin->getSetting());
+        db_.persist(vm_config);
+      }
+      else
+      {
+        const auto field = fields[i];
+        auto setting = message_builder.initRoot<VmSetting::Setting>();
+        auto dynamic_setting = capnp::DynamicStruct::Builder(setting);
+        dynamic_setting.clear(field);
+        auto vm_config = ConvertToVmSetting(vm_id, setting.asReader());
+        db_.persist(vm_config);
+      }
     }
     transaction.commit();
     return vm_id;
   }
 
+  /*
   template <typename T, typename TCallback>
   void Read(TCallback callback) {
     odb::transaction tran(db_.begin());
     auto it = db_.query<T>();
     callback(it);
   }
+  */
 
+  template <typename TCallback>
+  void ReadVirtualMachines(TCallback callback) {
+    odb::transaction tran(db_.begin());
+		const auto total_virtual_machines = db_.query_value<TotalVms>().Count;
+    auto it = db_.query<VmConfig>("ORDER BY " +
+      odb::query<VmConfig>::IDs.VmId + ", " + odb::query<VmConfig>::IDs.SettingID);
+    callback(total_virtual_machines, it);
+  }
+
+  /*
   template <typename TList, typename TCallback>
   void UpdateServerSettings(const typename capnp::List<TList>::Reader updates,
                             TCallback callback) {
@@ -138,51 +163,44 @@ class Database {
     }
     tran.commit();
   }
+  */
 
-/*
-  template <typename TList>
-  void UpdateVmSettings(const typename capnp::List<TList>::Reader updates) {
-    auto message_builder = std::make_unique<capnp::MallocMessageBuilder>();
-    auto list = InitSettings(*message_builder);
-    UpdateList<TList>(settings_list_, list, updates);
-    settings_ = std::move(message_builder);
-    settings_list_ = list;
-
+  void UpdateVmSettings(const std::uint32_t vm_id,
+    const capnp::List<VmSetting>::Reader updates) {
     odb::transaction tran(db_.begin());
     for (auto update : updates) {
-      auto setting = ConvertToVmSetting(
-          list[update.getSetting().which()].getSetting().asReader());
+      auto setting = ConvertToVmSetting(vm_id, update.getSetting());
       db_.update(setting);
     }
     tran.commit();
   }
-*/
 
   template <typename TList>
-  void UpdateList(const typename capnp::List<TList>::Reader old_list,
+  static void UpdateList(const typename capnp::List<TList>::Reader old_list,
                   typename capnp::List<TList>::Builder new_list,
                   const typename capnp::List<TList>::Reader list_updates) {
-    for (auto i = 0; i < new_list.size(); i++) {
-      auto changed = false;
+    assert(old_list.size() == new_list.size());
+    for (auto old_setting : old_list) {
+      const auto setting_type = old_setting.getSetting().which();
       // TODO: Make this more generic so it doesn't depend on getSetting()
-      capnp::DynamicStruct::Builder current_setting = new_list[i].getSetting();
-      for (auto updates_it = list_updates.begin();
-           updates_it != list_updates.end(); updates_it++) {
-        const auto updated_setting = updates_it->getSetting();
-        if (updated_setting.which() == i) {
-          const capnp::DynamicStruct::Reader reader = updated_setting;
-          KJ_IF_MAYBE(field, reader.which()) {
-            current_setting.set(*field, reader.get(*field));
-            changed = true;
-            break;
-          }
-        }
-      }
-      if (!changed) {
-        const capnp::DynamicStruct::Reader reader = old_list[i].getSetting();
+      capnp::DynamicStruct::Builder current_setting = new_list[setting_type].getSetting();
+      const auto updated_setting = std::find_if(list_updates.begin(),
+                                                   list_updates.end(),
+        [setting_type](const auto updated_setting)
+        {
+          return updated_setting.getSetting().which() == setting_type;
+        });
+      if (updated_setting != list_updates.end())
+      {
+        const capnp::DynamicStruct::Reader reader = updated_setting->getSetting();
         KJ_IF_MAYBE(field, reader.which()) {
           current_setting.set(*field, reader.get(*field));
+          continue;
         }
+      }
+      const capnp::DynamicStruct::Reader reader = old_setting.getSetting();
+      KJ_IF_MAYBE(field, reader.which()) {
+        current_setting.set(*field, reader.get(*field));
       }
     }
   }

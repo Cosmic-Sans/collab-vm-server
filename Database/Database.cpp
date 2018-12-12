@@ -89,8 +89,7 @@ void Database::SaveServerSettings(
     const capnp::List<ServerSetting>::Reader updates) {
   odb::transaction tran(db_.begin());
   for (auto update : updates) {
-    auto setting =
-        ConvertToDbSetting(updates[update.getSetting().which()].getSetting());
+    auto setting = ConvertToDbSetting(update.getSetting());
     db_.update(setting);
   }
   tran.commit();
