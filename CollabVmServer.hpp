@@ -334,10 +334,8 @@ namespace CollabVm::Server
                                   chat_message.getMessage());
                                 //                        message.setSender(username);
                                 //    message.setTimestamp(timestamp);
-                                recipient->QueueMessage(
-                                  std::move(socket_message));
-                                QueueMessage(
-                                  std::move(socket_message));
+                                recipient->QueueMessage(socket_message);
+                                QueueMessage(std::move(socket_message));
                               }
                             });
                         });
@@ -716,10 +714,7 @@ namespace CollabVm::Server
                 auto& message_builder = virtual_machines
                                        .GetAdminVirtualMachine(vm_id)->
                                        GetMessageBuilder();
-                auto autostart = message_builder.getRoot<CollabVmServerMessage>().getMessage().getReadVmConfigResponse()[0].getSetting().getAutoStart();
-                QueueMessage(
-                  CreateCopiedSocketMessage(
-                    message_builder));
+                QueueMessage(CreateCopiedSocketMessage(message_builder));
               });
           }
           break;
