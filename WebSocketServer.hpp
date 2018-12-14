@@ -48,13 +48,12 @@ class WebServerSocket : public std::enable_shared_from_this<
 
   void ReadWebSocketMessage(std::shared_ptr<WebServerSocket>&& self) {
     socket_.dispatch([ this, self = std::move(self) ](auto& socket) mutable {
-      // TODO: Don't clear the buffer before it's been processed
       auto buffer_ptr = std::make_shared<beast::flat_static_buffer<1024>>();
       auto& buffer = *buffer_ptr;
       socket.websocket.async_read(
           buffer, socket_.wrap([
             this, self = std::move(self), buffer_ptr = std::move(buffer_ptr)
-          ](auto& sockets, const boost::system::error_code& ec,
+          ](auto& sockets, const boost::system::error_code ec,
                   std::size_t bytes_transferred) mutable {
             if (ec) {
               Close();
@@ -73,14 +72,15 @@ class WebServerSocket : public std::enable_shared_from_this<
     parser_.emplace(std::piecewise_construct, std::make_tuple(),
                     std::make_tuple(alloc_));
 
-    socket_.dispatch([ this, self = this->shared_from_this() ](auto& socket) {
+    socket_.dispatch([ this, self = std::move(self) ](auto& socket) {
       beast::http::async_read_header(
           socket.socket, buffer_, *parser_,
           socket_.wrap([ this, self = std::move(self) ](
-              auto& sockets, const boost::system::error_code& ec,
+              auto& sockets, const boost::system::error_code ec,
               std::size_t bytes_transferred) mutable {
-            if (ec)
+            if (ec) {
               return;
+            }
             auto& request = parser_->get();
             if (request.method() == beast::http::verb::get) {
               // Accept WebSocket connections
@@ -104,7 +104,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                         },
                         socket_.wrap([ this, self = std::move(self) ](
                             auto& sockets,
-                            const boost::system::error_code& ec) mutable {
+                            const boost::system::error_code ec) mutable {
                           if (ec) {
                             Close();
                             return;
@@ -124,20 +124,20 @@ class WebServerSocket : public std::enable_shared_from_this<
               if (std::none_of(path.begin(), path.end(), [](const auto& e) {
                     return e == ".." || e == ".";
                   })) {
-                boost::system::error_code err;
+                auto err = boost::system::error_code();
                 path = boost::filesystem::canonical(path, doc_root_, err);
 
                 // Verify that the path exists and is within the doc root
                 if (!err && path.compare(doc_root_) >= 0 &&
                     std::equal(doc_root_.begin(), doc_root_.end(),
                                path.begin())) {
-                  beast::http::response<beast::http::file_body> resp;
+                  auto resp = beast::http::response<beast::http::file_body>();
                   resp.result(beast::http::status::ok);
                   resp.version(request.version());
                   resp.set(beast::http::field::server, "collab-vm-server");
                   resp.set(beast::http::field::content_type,
                            mime_type(request.target()));
-                  beast::http::file_body::value_type file;
+                  auto file = beast::http::file_body::value_type();
                   file.open(path.string().c_str(), beast::file_mode::read, err);
                   if (!err) {
                     resp.body() = std::move(file);
@@ -155,7 +155,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                           std::get<beast::http::response_serializer<beast::http::file_body>>(serializer_),
                           socket_.wrap([ this, self = std::move(self) ](
                               auto& sockets,
-                              const boost::system::error_code& ec,
+                              const boost::system::error_code ec,
                               std::size_t bytes_transferred) mutable {
                             std::get<
                                 beast::http::response<beast::http::file_body>>(
@@ -174,7 +174,7 @@ class WebServerSocket : public std::enable_shared_from_this<
               }
 
               // Send 404 response
-              beast::http::response<beast::http::string_body> resp;
+              auto resp = beast::http::response<beast::http::string_body>();
               resp.result(beast::http::status::not_found);
               resp.version(request.version());
               resp.set(beast::http::field::server, "collab-vm-server");
@@ -191,7 +191,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                   sockets.socket,
                   std::get<beast::http::response_serializer<beast::http::string_body>>(serializer_),
                   socket_.wrap([ this, self = std::move(self) ](
-                      auto& sockets, const boost::system::error_code& ec,
+                      auto& sockets, const boost::system::error_code ec,
                       std::size_t bytes_transferred) mutable {
                     if (!ec) {
                       ReadHttpRequest(std::move(self));
@@ -217,13 +217,13 @@ class WebServerSocket : public std::enable_shared_from_this<
               }
 
               // Disconnect socket to prevent data from being received
-              boost::system::error_code err;
+              auto err = boost::system::error_code();
               sockets.socket.close(err);
               return;
             }
 
             // Send 405 (Method Not Allowed)
-            beast::http::response<beast::http::string_body> resp;
+            auto resp = beast::http::response<beast::http::string_body>();
             resp.result(beast::http::status::method_not_allowed);
             resp.version(request.version());
             resp.set(beast::http::field::server, "collab-vm-server");
@@ -240,7 +240,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                 sockets.socket,
                 std::get<beast::http::response_serializer<beast::http::string_body>>(serializer_),
                 socket_.wrap([ this, self = std::move(self) ](
-                    auto& sockets, const boost::system::error_code& ec,
+                    auto& sockets, const boost::system::error_code ec,
                     std::size_t bytes_transferred) mutable {
                   if (!ec) {
                     ReadHttpRequest(std::move(self));
@@ -295,7 +295,7 @@ class WebServerSocket : public std::enable_shared_from_this<
 
   void Close() {
     socket_.dispatch([ this, self = this->shared_from_this() ](auto& sockets) {
-      boost::system::error_code ec;
+      auto ec = boost::system::error_code();
       sockets.socket.shutdown(
           asio::ip::tcp::socket::shutdown_type::shutdown_both, ec);
       sockets.socket.close(ec);
@@ -310,7 +310,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     //    using IpBytes = std::array<std::byte, 16>;
     using IpBytes = std::array<std::uint8_t, 16>;
 
-    IpAddress() {}
+    IpAddress() = default;
     IpAddress(const boost::asio::ip::address& ip_address)
         : str_(ip_address.to_string()) {
       if (ip_address.is_v4()) {
@@ -328,7 +328,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     // RFC4291
     static IpBytes GetIpv4MappedBytes(
         const boost::asio::ip::address_v4& ip_address) {
-      IpBytes bytes;
+      auto bytes = IpBytes();
       bytes[10] = 0xFF;
       bytes[11] = 0xFF;
       CopyIpAddressBytes(ip_address, bytes.begin() + 12);
@@ -354,8 +354,8 @@ class WebServerSocket : public std::enable_shared_from_this<
   // Return a reasonable mime type based on the extension of a file.
   boost::beast::string_view mime_type(boost::beast::string_view path) {
     using boost::beast::iequals;
-    auto const ext = [&path] {
-      auto const pos = path.rfind(".");
+    const auto ext = [&path] {
+      const auto pos = path.rfind(".");
       if (pos == boost::beast::string_view::npos)
         return boost::beast::string_view{};
       return path.substr(pos);
@@ -430,6 +430,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     SocketsWrapper(const SocketsWrapper& io_context) = delete;
     asio::ip::tcp::socket socket;
     beast::websocket::stream<asio::ip::tcp::socket&> websocket;
+    asio::ssl::stream<asio::ip::tcp::socket&> stream_;
   };
   StrandGuard<strand, SocketsWrapper> socket_;
   //  typedef typename TThreadPool::Strand Strand;
@@ -512,11 +513,11 @@ struct ThreadPool<false> {
 
  protected:
   void RunWorkers() {
-    unsigned long threads = thread_count_;
+    auto threads = thread_count_;
     // Decrement because the current thread will also become a worker
     --threads;
     threads_.reserve(threads);
-    for (unsigned long i = 0; i < threads; i++) {
+    for (auto i = 0u; i < threads; i++) {
       threads_.emplace_back([&] { io_context_.run(); });
     }
 
@@ -546,23 +547,23 @@ class WebServer : public TThreadPool {
   void Start(const std::string& host,
              const std::uint16_t port,
              const bool auto_start) {
-    boost::system::error_code ec;
+    auto ec = boost::system::error_code();
     CreateDocRoot(doc_root_, ec);
     if (ec) {
       return;
     }
 
-    interrupt_signal_.async_wait([this](const boost::system::error_code& error,
-                                        int signal_number) { Stop(); });
+    interrupt_signal_.async_wait([this](const auto error,
+                                        const auto signal_number) { Stop(); });
 
-    asio::ip::tcp::resolver resolver(TThreadPool::io_context_);
+    auto resolver = asio::ip::tcp::resolver(TThreadPool::io_context_);
     auto it = resolver.resolve(host, std::to_string(port), ec);
     if (ec) {
       std::cout << "Could not resolve hostname \"" << host << '"' << std::endl;
       return;
     }
 
-    const asio::ip::tcp::endpoint ep = *it.begin();
+    const auto ep = asio::ip::tcp::endpoint(*it.begin());
     std::cout << "Listening on " << ep << std::endl;
 
     acceptor_.open(ep.protocol());
@@ -576,7 +577,7 @@ class WebServer : public TThreadPool {
   }
 
   void Stop() {
-    boost::system::error_code ec;
+    auto ec = boost::system::error_code();
     interrupt_signal_.cancel(ec);
     acceptor_.close(ec);
 
@@ -601,7 +602,7 @@ class WebServer : public TThreadPool {
  private:
   static void CreateDocRoot(boost::filesystem::path& path,
                             boost::system::error_code& ec) {
-    boost::filesystem::file_status status = boost::filesystem::status(path, ec);
+    auto status = boost::filesystem::status(path, ec);
     if (ec) {
       if (status.type() == boost::filesystem::file_type::file_not_found) {
         if (boost::filesystem::create_directories(path, ec)) {
@@ -625,7 +626,6 @@ class WebServer : public TThreadPool {
     path = boost::filesystem::canonical(path, ec);
     if (ec) {
       std::cout << ec.category().message(ec.value()) << std::endl;
-      return;
     }
   }
 
@@ -643,7 +643,7 @@ class WebServer : public TThreadPool {
       socket_ptr->GetSocket([this, socket_ptr](auto& socket) {
         acceptor_.async_accept(
             socket,
-            [this, socket_ptr](const boost::system::error_code& ec) {
+            [this, socket_ptr](const boost::system::error_code ec) {
               if (ec || !acceptor_.is_open()) {
                 socket_ptr->Close();
                 return;
@@ -673,4 +673,4 @@ class WebServer : public TThreadPool {
   boost::filesystem::path doc_root_;
   asio::signal_set interrupt_signal_;
 };
-}  // namespace CollabVmServer
+}  // namespace CollabVm::Server

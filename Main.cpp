@@ -40,7 +40,7 @@ void Start(const std::string& root,
 int main(const int argc, const char* argv[]) {
   namespace po = boost::program_options;
 
-  po::options_description desc("Options");
+  auto desc = po::options_description("Options");
   desc.add_options()
     ("help,h", "display help message")
     ("version,v", "display version")
@@ -51,12 +51,12 @@ int main(const int argc, const char* argv[]) {
     ("no-autostart,n", "don't automatically start any VMs")
     ("threads,t", po::value<std::uint32_t>()->default_value(0, "number of cores"), "the number of threads the server will use");
 
-  po::variables_map vars;
+  auto vars = po::variables_map();
   try {
-    po::positional_options_description p;
-    p.add("help", -1);
+    auto positional_options = po::positional_options_description();
+    positional_options.add("help", -1);
     po::store(
-        po::command_line_parser(argc, argv).options(desc).positional(p).run(),
+        po::command_line_parser(argc, argv).options(desc).positional(positional_options).run(),
         vars);
 
     if (vars.count("help")) {
