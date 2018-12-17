@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <boost/asio.hpp>
 #include <boost/range/adaptors.hpp>
-//#include <cctype>
 #include <gsl/span>
 #include <memory>
 #include <string_view>
@@ -70,16 +69,83 @@ namespace CollabVm::Server
       {
       }
 
-      void OnMessage(std::shared_ptr<beast::flat_static_buffer_base>&& buffer)
-      override
+      class CollabVmMessageBuffer : public TSocket::MessageBuffer
       {
-        const auto buffer_data = buffer->data();
-        const kj::ArrayPtr<const capnp::word> array_ptr(
-          static_cast<const capnp::word*>(buffer_data.data()),
-          buffer_data.size() / sizeof(capnp::word));
+        capnp::FlatArrayMessageReader reader;
+      public:
+        CollabVmMessageBuffer() : reader(nullptr) {}
+        virtual capnp::FlatArrayMessageReader& CreateReader() = 0;
+
+        template<typename TBuffer>
+        capnp::FlatArrayMessageReader& CreateReader(TBuffer& buffer) {
+          const auto buffer_data = buffer.data();
+          const auto array_ptr = kj::ArrayPtr<const capnp::word>(
+            static_cast<const capnp::word*>(buffer_data.data()),
+            buffer_data.size() / sizeof(capnp::word));
+          // TODO: Considering using capnp::ReaderOptions with lower limits
+          reader = capnp::FlatArrayMessageReader(array_ptr);
+          return reader;
+        }
+      };
+
+      class CollabVmStaticMessageBuffer final : public CollabVmMessageBuffer
+      {
+        beast::flat_static_buffer<1024> buffer;
+      public:
+        void StartRead(std::shared_ptr<TSocket>&& socket) override
+        {
+          socket->ReadWebSocketMessage(std::move(socket),
+                                       std::static_pointer_cast<
+                                         CollabVmStaticMessageBuffer>(
+                                         CollabVmMessageBuffer::
+                                         shared_from_this()));
+        }
+        auto& GetBuffer()
+        {
+          return buffer;
+        }
+        capnp::FlatArrayMessageReader& CreateReader() override
+        {
+          return CollabVmMessageBuffer::CreateReader(buffer);
+        }
+      };
+
+      class CollabVmDynamicMessageBuffer final : public CollabVmMessageBuffer
+      {
+        beast::flat_buffer buffer;
+      public:
+        void StartRead(std::shared_ptr<TSocket>&& socket) override
+        {
+          socket->ReadWebSocketMessage(std::move(socket),
+                                       std::static_pointer_cast<
+                                         CollabVmDynamicMessageBuffer>(
+                                         CollabVmMessageBuffer::
+                                         shared_from_this()));
+        }
+        auto& GetBuffer()
+        {
+          return buffer;
+        }
+        capnp::FlatArrayMessageReader& CreateReader() override
+        {
+          return CollabVmMessageBuffer::CreateReader(buffer);
+        }
+      };
+
+      std::shared_ptr<typename TSocket::MessageBuffer> CreateMessageBuffer() override {
+        return is_admin_
+                 ? std::static_pointer_cast<typename TSocket::MessageBuffer>(
+                   std::make_shared<CollabVmDynamicMessageBuffer>())
+                 : std::static_pointer_cast<typename TSocket::MessageBuffer>(
+                   std::make_shared<CollabVmStaticMessageBuffer>());
+      }
+
+      void OnMessage(
+        std::shared_ptr<typename TSocket::MessageBuffer>&& buffer) override
+      {
         try
         {
-          HandleMessage(std::move(buffer), array_ptr);
+          HandleMessage(std::move(std::static_pointer_cast<CollabVmMessageBuffer>(buffer)));
         }
         catch (...)
         {
@@ -87,12 +153,11 @@ namespace CollabVm::Server
         }
       }
 
-      void HandleMessage(
-        std::shared_ptr<beast::flat_static_buffer_base>&& buffer,
-        const kj::ArrayPtr<const capnp::word> array)
+      void HandleMessage(std::shared_ptr<CollabVmMessageBuffer>&& buffer)
       {
-        capnp::FlatArrayMessageReader reader(array);
+        auto& reader = buffer->CreateReader();
         auto message = reader.getRoot<CollabVmClientMessage>().getMessage();
+
         switch (message.which())
         {
         case CollabVmClientMessage::Message::CONNECT_TO_CHANNEL:
@@ -667,28 +732,30 @@ namespace CollabVm::Server
           LeaveServerConfig();
           break;
         case CollabVmClientMessage::Message::CREATE_VM:
-          if (is_admin_)
+        {
+          if (!is_admin_)
           {
-            const auto settings = message.getCreateVm();
-            const auto vm_id =
-              server_.db_.CreateVm(settings.begin(), settings.end());
-            server_.virtual_machines_.dispatch([
-                this, self = shared_from_this(), buffer = std::move(
-                  buffer),
-                settings, vm_id
-              ](auto& virtual_machines)
-              {
-                const auto virtual_machine = virtual_machines.
-                  AddAdminVirtualMachine(vm_id, settings);
-                auto socket_message = CreateSharedSocketMessage();
-                socket_message
-                  ->GetMessageBuilder().initRoot<CollabVmServerMessage
-                  >().initMessage().
-                  setCreateVmResponse(vm_id);
-                QueueMessage(socket_message);
-              });
+            break;
           }
+          const auto settings = message.getCreateVm();
+          const auto vm_id =
+            server_.db_.CreateVm(settings.begin(), settings.end());
+          server_.virtual_machines_.dispatch([
+            this, self = shared_from_this(), buffer = std::move(buffer),
+              settings, vm_id
+          ](auto& virtual_machines)
+            {
+              const auto virtual_machine = virtual_machines.
+                AddAdminVirtualMachine(vm_id, settings);
+              auto socket_message = CreateSharedSocketMessage();
+              socket_message
+                ->GetMessageBuilder().initRoot<CollabVmServerMessage
+                >().initMessage().
+                setCreateVmResponse(vm_id);
+              QueueMessage(socket_message);
+            });
           break;
+        }
         case CollabVmClientMessage::Message::READ_VMS:
           if (is_admin_)
           {
@@ -730,6 +797,14 @@ namespace CollabVm::Server
                   GetAdminVirtualMachine(modified_vm.getId());
                 const auto modified_settings = modified_vm.
                   getModifications();
+                /*
+                const auto guac_params = std::find_if(
+                  modified_settings.begin(), modified_settings.end(), [](auto x)
+                  {
+                    return x.which() == VmSetting::Setting::GUACAMOLE_PARAMETERS;
+                  });
+                const auto num_guac_params = (*guac_params).getSetting();// .getGuacamoleParameters().size();
+                */
                 virtual_machine->UpdateSettings(
                   server_.db_, modified_settings);
               });
@@ -1294,6 +1369,9 @@ namespace CollabVm::Server
     };
 
     template <typename TClient>
+    struct AdminVirtualMachine;
+
+    template <typename TClient>
     struct VirtualMachine
     {
       VirtualMachine(const std::uint32_t id,
@@ -1303,16 +1381,17 @@ namespace CollabVm::Server
       }
 
       CollabVmServerMessage::VmInfo::Builder vm_info_;
+
+      // std::shared_ptr<AdminVirtualMachine<TClient>> admin_vm_info;
     };
 
     template <typename TClient>
-    struct AdminVirtualMachine final : UserChannel<TClient>,
-                                       VirtualMachine<TClient>
+    struct AdminVirtualMachine final : UserChannel<TClient>
     {
       AdminVirtualMachine(const std::uint32_t id,
                           const CollabVmServerMessage::VmInfo::Builder
                           vm_info) : UserChannel<TClient>(id),
-                                     VirtualMachine<TClient>(id, vm_info),
+                                     vm_info_(vm_info),
                                      message_builder_(
                                        std::make_unique<capnp::
                                          MallocMessageBuilder>()),
@@ -1418,6 +1497,7 @@ namespace CollabVm::Server
         }
       }
 
+      CollabVmServerMessage::VmInfo::Builder vm_info_;
       std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
       capnp::List<VmSetting>::Builder settings_;
     };
@@ -1433,13 +1513,15 @@ namespace CollabVm::Server
         auto admin_vm_list_message_builder = std::make_unique<capnp::MallocMessageBuilder>();
         std::unordered_map<std::uint32_t, std::shared_ptr<VirtualMachine<TClient
                            >>> virtual_machines;
-        db.ReadVirtualMachines([&virtual_machines,
+        std::unordered_map<std::uint32_t, std::shared_ptr<AdminVirtualMachine<TClient
+                           >>> admin_virtual_machines;
+        db.ReadVirtualMachines([&admin_virtual_machines,
             &vm_list_message_builder=*vm_list_message_builder,
             &admin_vm_list_message_builder=*admin_vm_list_message_builder](
           const auto total_virtual_machines,
           auto& vm_settings)
           {
-            auto admin_virtual_machines = admin_vm_list_message_builder
+            auto admin_virtual_machines_list = admin_vm_list_message_builder
                                           .initRoot<CollabVmServerMessage>()
                                           .initMessage()
                                           .initReadVmsResponse(
@@ -1495,12 +1577,13 @@ namespace CollabVm::Server
                 admin_vm_info.setId(vm_setting.IDs.VmId);
                 admin_vm_info.setName(vm_name);
 
-                virtual_machines.emplace(vm_setting.IDs.VmId, std::move(admin_vm));
+                // virtual_machines.emplace(vm_setting.IDs.VmId, std::move(admin_vm));
+                admin_virtual_machines.emplace(vm_setting.IDs.VmId, std::move(admin_vm));
               }
             }
           });
         return {
-          std::move(virtual_machines),
+          std::move(admin_virtual_machines),
           std::move(vm_list_message_builder),
           std::move(admin_vm_list_message_builder)
         };
@@ -1520,13 +1603,12 @@ namespace CollabVm::Server
       std::shared_ptr<AdminVirtualMachine<TClient>> GetAdminVirtualMachine(
         const std::uint32_t id)
       {
-        auto virtual_machine_it = virtual_machines_.find(id);
-        if (virtual_machine_it == virtual_machines_.end())
+        auto vm = admin_virtual_machines_.find(id);
+        if (vm == admin_virtual_machines_.end())
         {
           return {};
         }
-        return std::static_pointer_cast<AdminVirtualMachine<TClient>>(
-          virtual_machine_it->second);
+        return vm->second;
       }
 
       capnp::MallocMessageBuilder& GetAdminVirtualMachineInfo() const
@@ -1553,7 +1635,10 @@ namespace CollabVm::Server
       {
         auto vm = std::make_shared<AdminVirtualMachine<TClient>>(id,
           vm_info_list_.Add());
+        auto admin_vm_info = admin_vm_info_list_.Add();
+        admin_vm_info.setId(id);
         vm->SetSettings(initial_settings);
+        vm->SetSetting(db_setting.which(), field,
         return vm;
       }
 
@@ -1646,17 +1731,20 @@ namespace CollabVm::Server
       std::unordered_map<std::uint32_t, std::shared_ptr<VirtualMachine<TClient>>
       > virtual_machines_;
 
+      std::unordered_map<std::uint32_t, std::shared_ptr<AdminVirtualMachine<TClient>>
+      > admin_virtual_machines_;
+
       VirtualMachinesList(
         std::unordered_map<std::uint32_t,
-                           std::shared_ptr<VirtualMachine<TClient>>>&&
-        virtual_machines,
+                           std::shared_ptr<AdminVirtualMachine<TClient>>>&&
+        admin_virtual_machines,
         std::unique_ptr<capnp::MallocMessageBuilder>&&
         vm_list_message_builder,
         std::unique_ptr<capnp::MallocMessageBuilder>&&
         admin_vm_list_message_builder) :
         vm_info_list_(std::move(vm_list_message_builder)),
         admin_vm_info_list_(std::move(admin_vm_list_message_builder)),
-        virtual_machines_(std::move(std::move(virtual_machines)))
+        admin_virtual_machines_(std::move(admin_virtual_machines))
       {
       }
     };

@@ -46,21 +46,36 @@ class WebServerSocket : public std::enable_shared_from_this<
     });
   }
 
-  void ReadWebSocketMessage(std::shared_ptr<WebServerSocket>&& self) {
-    socket_.dispatch([ this, self = std::move(self) ](auto& socket) mutable {
-      auto buffer_ptr = std::make_shared<beast::flat_static_buffer<1024>>();
-      auto& buffer = *buffer_ptr;
+  class MessageBuffer : public std::enable_shared_from_this<MessageBuffer>
+  {
+  public:
+    MessageBuffer() = default;
+    MessageBuffer(const MessageBuffer&) = delete;
+
+  private:
+    friend class WebServerSocket;
+    virtual void StartRead(std::shared_ptr<WebServerSocket>&& socket) = 0;
+  };
+
+  virtual std::shared_ptr<MessageBuffer> CreateMessageBuffer() = 0;
+
+  template<typename TMessageBuffer>
+  void ReadWebSocketMessage(std::shared_ptr<WebServerSocket>&& self,
+                            std::shared_ptr<TMessageBuffer>&& buffer_ptr) {
+    socket_.dispatch([this, self = std::move(self),
+                      buffer_ptr = std::move(buffer_ptr)](auto& socket) mutable {
+      auto& buffer = buffer_ptr->GetBuffer();
       socket.websocket.async_read(
           buffer, socket_.wrap([
             this, self = std::move(self), buffer_ptr = std::move(buffer_ptr)
-          ](auto& sockets, const boost::system::error_code ec,
+          ](auto& sockets, const boost::system::error_code& ec,
                   std::size_t bytes_transferred) mutable {
             if (ec) {
               Close();
               return;
             }
             OnMessage(std::move(buffer_ptr));
-            ReadWebSocketMessage(std::move(self));
+            CreateMessageBuffer()->StartRead(std::move(self));
           }));
     });
   }
@@ -110,7 +125,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                             return;
                           }
                           sockets.websocket.binary(true);
-                          ReadWebSocketMessage(std::move(self));
+                          CreateMessageBuffer()->StartRead(std::move(self));
                         }));
                     return;
                   }
@@ -417,10 +432,8 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
  protected:
-  virtual void OnMessage(
-      std::shared_ptr<beast::flat_static_buffer_base>&& buffer) = 0;
+  virtual void OnMessage(std::shared_ptr<MessageBuffer>&& buffer) = 0;
   virtual void OnDisconnect() = 0;
-  //  asio::ip::tcp::socket socket_;
   using strand = typename TThreadPool::Strand;
 
  private:
@@ -430,7 +443,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     SocketsWrapper(const SocketsWrapper& io_context) = delete;
     asio::ip::tcp::socket socket;
     beast::websocket::stream<asio::ip::tcp::socket&> websocket;
-    asio::ssl::stream<asio::ip::tcp::socket&> stream_;
+    // asio::ssl::stream<asio::ip::tcp::socket&> stream_;
   };
   StrandGuard<strand, SocketsWrapper> socket_;
   //  typedef typename TThreadPool::Strand Strand;
