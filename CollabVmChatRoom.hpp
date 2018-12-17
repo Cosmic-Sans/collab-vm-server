@@ -1,7 +1,5 @@
 #pragma once
 #include <capnp/message.h>
-#include <memory>
-#include <vector>
 #include "CollabVm.capnp.h"
 
 namespace CollabVm::Server {
@@ -49,8 +47,7 @@ class CollabVmChatRoom {
     return history_message_builder_;
   }
 
-  // capnp::List<CollabVmServerMessage::ChatMessage>::Builder& GetChatHistory() const {
-  const capnp::List<CollabVmServerMessage::ChatMessage>::Reader GetChatHistory() const {
+  capnp::List<CollabVmServerMessage::ChatMessage>::Reader GetChatHistory() const {
     return chat_message_history_.asReader();
   }
 
@@ -69,4 +66,4 @@ class CollabVmChatRoom {
   capnp::List<CollabVmServerMessage::ChatMessage>::Builder
       chat_message_history_;
 };
-}  // namespace CollabVmServer
+}  // namespace CollabVm::Server

@@ -49,4 +49,4 @@ inline bool ValidateTotp(
                input;
       });
 }
-}  // namespace CollabVmServer::Totp
+}  // namespace CollabVm::Server::Totp

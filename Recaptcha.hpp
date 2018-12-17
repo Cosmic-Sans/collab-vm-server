@@ -163,4 +163,4 @@ class RecaptchaVerifier {
     });
   }
 };
-}  // namespace CollabVmServer
+}  // namespace CollabVm::Server

@@ -97,34 +97,9 @@ class Database {
 
   void RemoveVm(const std::string& name);
 
-  template <typename It>
-  std::uint32_t CreateVm(It begin, It end) {
-    capnp::MallocMessageBuilder message_builder;
-    auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
-    odb::transaction transaction(db_.begin());
-    const auto vm_id = db_.query_value<NewVmId>().Id;
-    for (auto i = 0u; i < fields.size(); i++) {
-      while (begin != end && begin->getSetting().which() < i)
-      {
-        begin++;
-      }
-      if (begin != end && begin->getSetting().which() == i)
-      {
-        auto vm_config = ConvertToVmSetting(vm_id, begin->getSetting());
-        db_.persist(vm_config);
-      }
-      else
-      {
-        const auto field = fields[i];
-        auto setting = message_builder.initRoot<VmSetting::Setting>();
-        auto dynamic_setting = capnp::DynamicStruct::Builder(setting);
-        dynamic_setting.clear(field);
-        auto vm_config = ConvertToVmSetting(vm_id, setting.asReader());
-        db_.persist(vm_config);
-      }
-    }
-    transaction.commit();
-    return vm_id;
+  std::uint32_t GetNewVmId() {
+    odb::transaction tran(db_.begin());
+    return db_.query_value<NewVmId>().Id;
   }
 
   /*
@@ -164,6 +139,16 @@ class Database {
     tran.commit();
   }
   */
+
+  void CreateVm(const std::uint32_t vm_id,
+    const capnp::List<VmSetting>::Reader updates) {
+    odb::transaction tran(db_.begin());
+    for (auto update : updates) {
+      auto setting = ConvertToVmSetting(vm_id, update.getSetting());
+      db_.persist(setting);
+    }
+    tran.commit();
+  }
 
   void UpdateVmSettings(const std::uint32_t vm_id,
     const capnp::List<VmSetting>::Reader updates) {
@@ -231,4 +216,4 @@ class Database {
 
   odb::sqlite::database db_;
 };
-}  // namespace CollabVmServer
+}  // namespace CollabVm::Server

@@ -384,4 +384,4 @@ void Database::RemoveVm(const std::string& name) {
   //  VirtualMachines.erase(it);
 }
 
-}  // namespace CollabVmServer
+}  // namespace CollabVm::Server
