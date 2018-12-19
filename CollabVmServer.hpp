@@ -427,19 +427,14 @@ namespace CollabVm::Server
                 break;
               }
             case CollabVmClientMessage::ChatMessageDestination::Destination::VM:
-              server_.virtual_machines_.dispatch([
-                  this, self = TSocket::shared_from_this(),
-                  buffer = std::move(buffer), chat_message,
-                  id = destination.getVm()
-                ](auto& virtual_machines)
+              {
+                const auto id = destination.getVm();
+                auto send_message = [
+                    this, self = shared_from_this(),
+                    buffer = std::move(buffer), chat_message
+                  ](auto& channel)
                 {
-                  const auto virtual_machine = virtual_machines.
-                    GetAdminVirtualMachine(id);
-                  if (!virtual_machine)
-                  {
-                    return;
-                  }
-                  auto& chat_room = virtual_machine->GetChatRoom();
+                  auto& chat_room = channel.GetChatRoom();
                   auto new_chat_message = CreateSharedSocketMessage();
                   auto chat_room_message =
                     new_chat_message->GetMessageBuilder()
@@ -448,13 +443,31 @@ namespace CollabVm::Server
                                     .initChatMessage();
                   chat_room.AddUserMessage(chat_room_message, username_,
                                            chat_message.getMessage());
-                  for (auto&& client_ptr : virtual_machine->GetClients()
+                  for (auto&& client_ptr : channel.GetClients()
                   )
                   {
                     client_ptr->QueueMessage(new_chat_message);
                   }
+                };
+                if (id == global_channel_id)
+                {
+                  server_.global_chat_room_.dispatch(std::move(send_message));
+                  break;
+                }
+              server_.virtual_machines_.dispatch([
+                  id, send_message = std::move(send_message)
+              ](auto& virtual_machines)
+                {
+                  const auto virtual_machine = virtual_machines.
+                    GetAdminVirtualMachine(id);
+                  if (!virtual_machine)
+                  {
+                    return;
+                  }
+                  send_message(*virtual_machine);
                 });
               break;
+            }
             default:
               break;
             }

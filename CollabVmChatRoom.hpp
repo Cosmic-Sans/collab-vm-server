@@ -7,15 +7,15 @@ template <typename TClient, unsigned MaxUsernameLen, unsigned MaxMessageLen>
 class CollabVmChatRoom {
   constexpr static auto max_chat_message_history = 20;
 
- public:
+public:
   explicit CollabVmChatRoom(const std::uint32_t id)
-      : id_(id), next_message_offset_(0) {
+    : id_(id), next_message_offset_(0) {
     auto channel_messages =
-        history_message_builder_.initRoot<CollabVmServerMessage>()
-            .initMessage()
-            .initChatMessages();
+      history_message_builder_.initRoot<CollabVmServerMessage>()
+      .initMessage()
+      .initChatMessages();
     channel_messages.setChannel(id);
-    channel_messages.initMessages(max_chat_message_history);
+    chat_message_history_ = channel_messages.initMessages(max_chat_message_history);
     for (auto&& message : chat_message_history_) {
       message.initSender(MaxUsernameLen);
       message.initMessage(MaxMessageLen);
@@ -23,13 +23,13 @@ class CollabVmChatRoom {
   }
 
   void AddUserMessage(
-		CollabVmServerMessage::ChannelChatMessage::Builder channel_chat_message,
-      const std::string& username,
-      const std::string& message) {
+    CollabVmServerMessage::ChannelChatMessage::Builder channel_chat_message,
+    const std::string& username,
+    const std::string& message) {
     const auto timestamp =
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count();
+      std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch())
+      .count();
     channel_chat_message.setChannel(id_);
     auto chat_message = channel_chat_message.initMessage();
     chat_message.setMessage(message);
@@ -38,9 +38,19 @@ class CollabVmChatRoom {
 
     chat_message = chat_message_history_[next_message_offset_];
     next_message_offset_ = next_message_offset_ + 1 % max_chat_message_history;
-    chat_message.setMessage(message);
-    chat_message.setSender(username);
+    const auto message_body = chat_message.getMessage();
+    copyStringToTextBuilder(message, message_body);
+    copyStringToTextBuilder(username, chat_message.getSender());
     chat_message.setTimestamp(timestamp);
+  }
+
+  static void copyStringToTextBuilder(const std::string& string,
+                                      capnp::Text::Builder text_builder)
+  {
+    const auto new_text_end = std::copy(string.begin(),
+                                        string.end(),
+                                        text_builder.begin());
+    std::fill(new_text_end, text_builder.end(), '\0');
   }
 
   capnp::MallocMessageBuilder& GetHistoryMessageBuilder() {
