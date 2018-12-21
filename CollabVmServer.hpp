@@ -1,13 +1,14 @@
 #pragma once
 #include <algorithm>
 #include <boost/asio.hpp>
+#include <boost/beast.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/range/adaptors.hpp>
 #include <gsl/span>
 #include <memory>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
-#include <utility>
 #include <utility>
 #include <vector>
 #include <capnp/blob.h>
@@ -18,6 +19,7 @@
 
 #include "capnp-list.hpp"
 #include "CapnpMessageFrameBuilder.hpp"
+#include "CaseInsensitiveUtils.hpp"
 #include "CollabVm.capnp.h"
 #include "CollabVmCommon.hpp"
 #include "CollabVmChatRoom.hpp"
@@ -25,7 +27,6 @@
 #include "Recaptcha.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
-#include "WebSocketServer.hpp"
 #include "VmListProvider.hpp"
 
 namespace CollabVm::Server
@@ -52,7 +53,7 @@ namespace CollabVm::Server
         Database::SessionIdHasher>;
 
     public:
-      CollabVmSocket(asio::io_context& io_context,
+      CollabVmSocket(boost::asio::io_context& io_context,
                      const boost::filesystem::path& doc_root,
                      CollabVmServer& server)
         : TSocket(io_context, doc_root),
@@ -90,7 +91,7 @@ namespace CollabVm::Server
 
       class CollabVmStaticMessageBuffer final : public CollabVmMessageBuffer
       {
-        beast::flat_static_buffer<1024> buffer;
+        boost::beast::flat_static_buffer<1024> buffer;
       public:
         void StartRead(std::shared_ptr<TSocket>&& socket) override
         {
@@ -112,7 +113,7 @@ namespace CollabVm::Server
 
       class CollabVmDynamicMessageBuffer final : public CollabVmMessageBuffer
       {
-        beast::flat_buffer buffer;
+        boost::beast::flat_buffer buffer;
       public:
         void StartRead(std::shared_ptr<TSocket>&& socket) override
         {
@@ -138,6 +139,11 @@ namespace CollabVm::Server
                    std::make_shared<CollabVmDynamicMessageBuffer>())
                  : std::static_pointer_cast<typename TSocket::MessageBuffer>(
                    std::make_shared<CollabVmStaticMessageBuffer>());
+      }
+
+      void OnConnect() override
+      {
+        
       }
 
       void OnMessage(
@@ -1079,7 +1085,7 @@ namespace CollabVm::Server
         TSocket::WriteMessage(
           segment_buffers,
           send_queue_.wrap([ this, self = std::move(self), socket_message ](
-            auto& send_queue, const beast::error_code& ec,
+            auto& send_queue, const boost::beast::error_code& ec,
             std::size_t bytes_transferred) mutable
             {
               if (ec)
@@ -1219,7 +1225,7 @@ namespace CollabVm::Server
 
   protected:
     std::shared_ptr<typename TServer::TSocket> CreateSocket(
-      asio::io_context& io_context,
+      boost::asio::io_context& io_context,
       const boost::filesystem::path& doc_root) override
     {
       return std::make_shared<CollabVmSocket<typename TServer::TSocket>>(
@@ -1276,19 +1282,17 @@ namespace CollabVm::Server
       //    socket.QueueMessage(std::move(socket_message));
     }
 
-    /*
     std::string GenerateUsername()
     {
       auto num = guest_rng_(rng_);
       auto username = "guest" + std::to_string(num);
       // Increment the number until a username is found that is not taken
-      while (usernames_.find(username) != usernames_.end())
+      while (guests_.find(username) != guests_.end())
       {
         username = "guest" + std::to_string(++num);
       }
       return username;
     }
-    */
 
     using Socket = CollabVmSocket<typename TServer::TSocket>;
 
@@ -1799,7 +1803,7 @@ namespace CollabVm::Server
                                           std::shared_ptr<Socket>,
                                           Database::SessionIdHasher>;
     StrandGuard<SessionMap> sessions_;
-    StrandGuard<std::unordered_map<std::string, std::shared_ptr<Socket>>>
+    StrandGuard<std::unordered_map<std::string, std::shared_ptr<Socket>, CaseInsensitiveHasher, CaseInsensitiveComparator>>
     guests_;
     boost::asio::ssl::context ssl_ctx_;
     RecaptchaVerifier recaptcha_;

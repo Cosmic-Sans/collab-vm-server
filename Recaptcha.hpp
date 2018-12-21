@@ -6,6 +6,7 @@
 #include <boost/beast/websocket.hpp>
 #include <boost/iostreams/device/array.hpp>
 #include <boost/iostreams/stream.hpp>
+// TODO: Replace Boost Property Tree with Cap'N Proto's JSON parser
 #include <boost/property_tree/json_parser.hpp>
 #include <functional>
 #include <optional>

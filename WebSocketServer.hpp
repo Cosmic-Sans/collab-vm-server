@@ -113,7 +113,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                     buffer_.consume(buffer_.size());
                     sockets.websocket.async_accept_ex(
                         request,
-                        [self](beast::websocket::response_type& res) {
+                        [](beast::websocket::response_type& res) {
                           res.set(beast::http::field::server,
                                   "collab-vm-server");
                         },
@@ -124,6 +124,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                             Close();
                             return;
                           }
+                          OnConnect();
                           sockets.websocket.binary(true);
                           CreateMessageBuffer()->StartRead(std::move(self));
                         }));
@@ -432,6 +433,7 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
  protected:
+  virtual void OnConnect() = 0;
   virtual void OnMessage(std::shared_ptr<MessageBuffer>&& buffer) = 0;
   virtual void OnDisconnect() = 0;
   using strand = typename TThreadPool::Strand;
