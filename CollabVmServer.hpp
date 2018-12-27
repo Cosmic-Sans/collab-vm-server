@@ -262,6 +262,32 @@ namespace CollabVm::Server
               });
             break;
           }
+        case CollabVmClientMessage::Message::CHANGE_PASSWORD_REQUEST:
+            if (!is_logged_in_)
+            {
+              break;
+            }
+            {
+              const auto change_password_request =
+                message.getChangePasswordRequest();
+              auto lambda = [this, self = shared_from_this(),
+                buffer = std::move(buffer), change_password_request]()
+              {
+                const auto success = server_.db_.ChangePassword(
+                  username_,
+                  change_password_request.getOldPassword(),
+                  change_password_request.getNewPassword());
+                auto socket_message = CreateSharedSocketMessage();
+                socket_message->GetMessageBuilder()
+                  .initRoot<CollabVmServerMessage>()
+                  .initMessage().setChangePasswordResponse(success);
+                QueueMessage(std::move(socket_message));
+              };
+              server_.login_strand_.post(
+                std::move(lambda),
+                std::allocator<decltype(lambda)>());
+            }
+            break;
         case CollabVmClientMessage::Message::CHAT_MESSAGE:
           {
             if (username_.empty())
@@ -505,7 +531,6 @@ namespace CollabVm::Server
             const auto username = login_request.getUsername();
             const auto password = login_request.getPassword();
             const auto captcha_token = login_request.getCaptchaToken();
-            boost::system::error_code ec;
             server_.recaptcha_.Verify(
               captcha_token,
               [
@@ -834,37 +859,8 @@ namespace CollabVm::Server
               const auto num_guac_params = (*guac_params).getSetting();// .getGuacamoleParameters().size();
               */
               virtual_machine->UpdateSettings(server_.db_, modified_settings);
-              virtual_machines.admin_vm_info_list_.Transform(
-                [vm_id, &virtual_machine = *virtual_machine](auto source, auto destination)
-                {
-                  if (source.getId() == vm_id)
-                  {
-                    destination.setId(vm_id);
-                    destination.setName(virtual_machine.GetSetting(VmSetting::Setting::NAME).getName());
-                    destination.setStatus(CollabVmServerMessage::VmStatus::STOPPED);
-                  }
-                  else
-                  {
-                    destination = source;
-                  }
-                });
+              virtual_machine->UpdateAdminVmInfo(virtual_machines.admin_vm_info_list_);
               SendAdminVmList(virtual_machines);
-              /*
-              auto& message_builder = virtual_machines.GetAdminVirtualMachineInfo();
-              auto admin_vm_info_list =
-                message_builder.getRoot<CollabVmServerMessage>().getMessage().getReadVmsResponse();
-              auto admin_vm_info = std::find_if(admin_vm_info_list.begin(),
-                                                admin_vm_info_list.end(),
-                [vm_id](auto info)
-                {
-                  return info.getId() == vm_id;
-                });
-              assert(admin_vm_info != admin_vm_info_list.end());
-              if (virtual_machine->SetVmInfo(*admin_vm_info))
-              {
-                SendAdminVmList(virtual_machines);
-              }
-            */
             });
           break;
         case CollabVmClientMessage::Message::DELETE_VM:
@@ -1550,21 +1546,43 @@ namespace CollabVm::Server
         settings_ = settings;
       }
 
-      // Returns true if the any of the settings were actually changed
-      bool SetVmInfo(CollabVmServerMessage::AdminVmInfo::Builder vm_info) {
-        auto changed = false;
-        if (vm_info.getId() != UserChannel<TClient>::GetId())
-        {
-          changed = true;
-          vm_info.setId(UserChannel<TClient>::GetId());
-        }
-        // if (vm_info.getName() != GetSetting(VmSetting::Setting::NAME).getName())
-        {
-          changed = true;
-          vm_info.setName(GetSetting(VmSetting::Setting::NAME).getName());
-        }
+      void SetVmInfo(CollabVmServerMessage::VmInfo::Builder vm_info)
+      {
+        vm_info.setId(UserChannel<TClient>::GetId());
+        vm_info.setName(GetSetting(VmSetting::Setting::NAME).getName());
+        // vm_info.setHost();
+        // vm_info.setAddress();
+        vm_info.setOperatingSystem(GetSetting(VmSetting::Setting::OPERATING_SYSTEM).getOperatingSystem());
+        vm_info.setUploads(GetSetting(VmSetting::Setting::UPLOADS_ENABLED).getUploadsEnabled());
+        vm_info.setInput(GetSetting(VmSetting::Setting::TURNS_ENABLED).getTurnsEnabled());
+        vm_info.setRam(GetSetting(VmSetting::Setting::RAM).getRam());
+        vm_info.setDiskSpace(GetSetting(VmSetting::Setting::DISK_SPACE).getDiskSpace());
+        vm_info.setSafeForWork(GetSetting(VmSetting::Setting::SAFE_FOR_WORK).getSafeForWork());
+      }
+
+      void SetAdminVmInfo(CollabVmServerMessage::AdminVmInfo::Builder vm_info) {
+        vm_info.setId(UserChannel<TClient>::GetId());
+        vm_info.setName(GetSetting(VmSetting::Setting::NAME).getName());
         vm_info.setStatus(CollabVmServerMessage::VmStatus::STOPPED);
-        return changed;
+      }
+
+      template<typename TAdminVmList>
+      void UpdateAdminVmInfo(TAdminVmList& admin_vm_info_list)
+      {
+        admin_vm_info_list.Transform(
+          [this, id = UserChannel<TClient>::GetId()](auto source, auto destination)
+          {
+            if (source.getId() == id)
+            {
+              destination.setId(id);
+              destination.setName(GetSetting(VmSetting::Setting::NAME).getName());
+              destination.setStatus(CollabVmServerMessage::VmStatus::STOPPED);
+            }
+            else
+            {
+              destination = source;
+            }
+          });
       }
 
       capnp::MallocMessageBuilder& GetMessageBuilder()
@@ -1664,7 +1682,6 @@ namespace CollabVm::Server
             }
             auto fields = capnp::Schema::from<VmSetting::Setting>().
               getUnionFields();
-            const auto settings_per_vm = fields.size();
             capnp::List<VmSetting>::Builder vm_config;
             auto vm_index = 0u;
             auto previous_vm_id = vm_settings.begin()->IDs.VmId;
@@ -1693,14 +1710,12 @@ namespace CollabVm::Server
               {
                 // Last setting has been set, set all admin and VM info
                 auto admin_vm_info = admin_virtual_machines_list[vm_index];
-                admin_vm->SetVmInfo(admin_vm_info);
+                admin_vm->SetAdminVmInfo(admin_vm_info);
 
                 if (admin_vm->GetSetting(VmSetting::Setting::AUTO_START).getAutoStart())
                 {
                   auto vm_info = virtual_machine_list[vm_index];
-                  vm_info.setId(vm_setting.IDs.VmId);
-                  auto vm_name = admin_vm->GetSetting(VmSetting::Setting::NAME).getName();
-                  vm_info.setName(vm_name);
+                  admin_vm->SetVmInfo(vm_info);
 
                   virtual_machines.emplace(vm_setting.IDs.VmId,
                     std::make_shared<VirtualMachine<CollabVmSocket<
@@ -1783,7 +1798,7 @@ namespace CollabVm::Server
           vm_info_list_.Add());
         vm->SetInitialSettings(initial_settings);
         auto admin_vm_info = admin_vm_info_list_.Add();
-        vm->SetVmInfo(admin_vm_info);
+        vm->SetAdminVmInfo(admin_vm_info);
         auto [it, inserted_new] = admin_virtual_machines_.emplace(id, vm);
         assert(inserted_new);
         return vm;

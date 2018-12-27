@@ -33,6 +33,9 @@ class Database {
 
   Database();
 
+  User::PasswordHash HashPassword(const std::string& password,
+    const User::PasswordSalt& salt);
+
   CollabVmServerMessage::RegisterAccountResponse::RegisterAccountError
   CreateAccount(
       const std::string& username,
@@ -56,6 +59,38 @@ class Database {
   std::pair<CollabVmServerMessage::LoginResponse::LoginResult,
             std::vector<uint8_t>>
   Login(const std::string& username, const std::string& password);
+
+  bool ChangePassword(const std::string& username,
+                      const std::string& old_password,
+                      const std::string& new_password)
+  {
+    auto user = User();
+    {
+      auto transaction = odb::transaction(db_.begin());
+      if (!db_.query_one<User>(odb::query<User>::Username == username, user)) {
+        return false;
+      }
+    }
+    const auto old_hash = HashPassword(old_password, user.PasswordSalt_);
+    if (!std::equal(user.PasswordHash_.cbegin(), user.PasswordHash_.cend(),
+                    old_hash.cbegin())) {
+      return false;
+    }
+    // TODO: Require TOTP for changing the password
+    /*
+    if (!user.TotpKey.empty()) {
+      return false;
+    }
+    */
+
+    user.PasswordHash_ = HashPassword(new_password, user.PasswordSalt_);
+    {
+      auto transaction = odb::transaction(db_.begin());
+      db_.update(user);
+    }
+
+    return true;
+  }
 
   bool CreateReservedUsername(const std::string& username);
 

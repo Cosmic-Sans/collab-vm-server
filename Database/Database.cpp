@@ -120,7 +120,7 @@ VmConfig Database::ConvertToVmSetting(
           std::move(setting_blob)};
 }
 
-static User::PasswordHash HashPassword(const std::string& password,
+User::PasswordHash Database::HashPassword(const std::string& password,
                                        const User::PasswordSalt& salt) {
   const auto time_cost = 2;
   const auto mem_cost = 32 * 1024;
