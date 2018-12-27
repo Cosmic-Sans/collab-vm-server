@@ -95,7 +95,12 @@ class Database {
 
   void UpdateVm(std::shared_ptr<VmConfig>& vm);
 
-  void RemoveVm(const std::string& name);
+  void RemoveVm(std::uint32_t id)
+  {
+    auto transaction = odb::transaction(db_.begin());
+    db_.erase_query<VmConfig>(odb::query<VmConfig>::IDs.VmId == id);
+    transaction.commit();
+  }
 
   std::uint32_t GetNewVmId() {
     odb::transaction tran(db_.begin());

@@ -318,6 +318,7 @@ class WebServerSocket : public std::enable_shared_from_this<
       if (close_callback_) {
         close_callback_();
         close_callback_ = nullptr;
+        OnDisconnect();
       }
     });
   }
@@ -436,7 +437,6 @@ class WebServerSocket : public std::enable_shared_from_this<
   virtual void OnConnect() = 0;
   virtual void OnMessage(std::shared_ptr<MessageBuffer>&& buffer) = 0;
   virtual void OnDisconnect() = 0;
-  using strand = typename TThreadPool::Strand;
 
  private:
   struct SocketsWrapper {
@@ -447,8 +447,8 @@ class WebServerSocket : public std::enable_shared_from_this<
     beast::websocket::stream<asio::ip::tcp::socket&> websocket;
     // asio::ssl::stream<asio::ip::tcp::socket&> stream_;
   };
-  StrandGuard<strand, SocketsWrapper> socket_;
-  //  typedef typename TThreadPool::Strand Strand;
+
+  StrandGuard<typename TThreadPool::Strand, SocketsWrapper> socket_;
 
   beast::flat_static_buffer<8192> buffer_;
 
@@ -680,11 +680,11 @@ class WebServer : public TThreadPool {
   }
 
   bool stopping_;
-  StrandGuard<typename TThreadPool::Strand, std::list<std::shared_ptr<TSocket>>>
-      sockets_;
+  StrandGuard<
+    typename TThreadPool::Strand,
+    std::list<std::shared_ptr<TSocket>>> sockets_;
 
   asio::ip::tcp::acceptor acceptor_;
-  //  typename TThreadPool::Strand sockets_strand_;
   boost::filesystem::path doc_root_;
   asio::signal_set interrupt_signal_;
 };

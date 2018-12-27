@@ -62,7 +62,6 @@ void Database::LoadServerSettings(
     capnp::DynamicStruct::Builder dynamic_server_setting = server_setting;
     const auto field = fields[setting_id];
     if (db_settings_it != settings.end() && db_settings_it->ID == setting_id) {
-      // TODO: Make sure db_setting_it->Setting is properly aligned
       auto db_setting = capnp::readMessageUnchecked<ServerSetting::Setting>(
           reinterpret_cast<const capnp::word*>(db_settings_it->Setting.data()));
       if (db_setting.which() == setting_id) {
@@ -98,7 +97,6 @@ ServerConfig Database::ConvertToDbSetting(
     const ServerSetting::Setting::Reader& server_setting) const {
   // capnp::copyToUnchecked requires the target buffer to have an extra word
   const auto blob_word_size = server_setting.totalSize().wordCount + 1;
-  // TODO: Make sure alignment requirements are met
   std::vector<uint8_t> setting_blob(blob_word_size * sizeof(capnp::word));
   capnp::copyToUnchecked(
       server_setting,
@@ -113,7 +111,6 @@ VmConfig Database::ConvertToVmSetting(
     const VmSetting::Setting::Reader& setting) const {
   // capnp::copyToUnchecked requires the target buffer to have an extra word
   const auto blob_word_size = setting.totalSize().wordCount + 1;
-  // TODO: Make sure alignment requirements are met
   std::vector<std::uint8_t> setting_blob(blob_word_size * sizeof(capnp::word));
   capnp::copyToUnchecked(
       setting,
@@ -365,23 +362,6 @@ void Database::UpdateVm(std::shared_ptr<VmConfig>& vm) {
   t.commit();
 
   // VirtualMachines[vm->name] = vm;
-}
-
-void Database::RemoveVm(const std::string& name) {
-  //  auto it = VirtualMachines.find(name);
-  //  if (it == VirtualMachines.end())
-  return;
-
-  // The name parameter could be a reference to the key in the map
-  // so the VM should be erased from the database first, and then
-  // from the map
-  odb::transaction t(db_.begin());
-
-  //  db_.erase<VmConfig>(name);
-
-  t.commit();
-
-  //  VirtualMachines.erase(it);
 }
 
 }  // namespace CollabVm::Server
