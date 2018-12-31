@@ -882,6 +882,50 @@ namespace CollabVm::Server
               SendAdminVmList(virtual_machines);
             });
           break;
+        case CollabVmClientMessage::Message::START_VMS:
+          if (!is_admin_)
+          {
+            break;
+          }
+          server_.virtual_machines_.dispatch(
+            [this, self = shared_from_this(), buffer = std::move(buffer),
+              message](auto& virtual_machines)
+          {
+            for (auto vm_id : message.getStartVms())
+            {
+              const auto virtual_machine =
+                virtual_machines.GetAdminVirtualMachine(vm_id);
+              if (!virtual_machine)
+              {
+                // TODO: Indicate error
+                return;
+              }
+              virtual_machine->Start();
+            }
+          });
+          break;
+        case CollabVmClientMessage::Message::STOP_VMS:
+          if (!is_admin_)
+          {
+            break;
+          }
+          server_.virtual_machines_.dispatch(
+            [this, self = shared_from_this(), buffer = std::move(buffer),
+              message](auto& virtual_machines)
+          {
+            for (auto vm_id : message.getStartVms())
+            {
+              const auto virtual_machine =
+                virtual_machines.GetAdminVirtualMachine(vm_id);
+              if (!virtual_machine)
+              {
+                // TODO: Indicate error
+                return;
+              }
+              virtual_machine->Stop();
+            }
+          });
+          break;
         case CollabVmClientMessage::Message::CREATE_INVITE:
           if (is_admin_)
           {
@@ -1488,6 +1532,16 @@ namespace CollabVm::Server
                                          capnp::Schema::from<VmSetting::Setting
                                          >().getUnionFields().size()))
       {
+      }
+
+      void Start()
+      {
+        
+      }
+
+      void Stop()
+      {
+        
       }
 
       capnp::List<VmSetting>::Builder GetSettings()
