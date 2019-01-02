@@ -1,9 +1,4 @@
-#include "GuacClient.hpp"
-#ifdef WIN32
-#undef CONST
-#undef min
-#undef max
-#endif
+#include "GuacamoleClient.hpp"
 #include <argon2.h>
 #include <openssl/opensslv.h>
 #include <sqlite3.h>

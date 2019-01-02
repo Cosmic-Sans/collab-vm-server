@@ -19,6 +19,7 @@
 #include "CapnpMessageFrameBuilder.hpp"
 
 
+#include "GuacamoleClient.hpp"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,9 +37,13 @@ extern "C" {
 #include "freerdp/client/channels.h"
 #include <freerdp/addin.h>
 #include "protocols/rdp/client.h"
+#include <atomic>
+#include <string_view>
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
+#include <memory>
 #include <mutex>
 #include <iostream>
 
@@ -101,6 +106,7 @@ void StartWebSocketServer(guac_client& client, std::vector<char*>& args)
 					ssize_t written = websocket.write(buffers, ec);
 					return ec ? 0 : written;
 				};
+        // user.owner = true;
 				user.socket = guac_socket;
 				user.client = &client;
 				//	user.owner  = params->owner;
@@ -174,13 +180,14 @@ void StartVncClient(guac_client* client) {
   user->info.optimal_height = 600;
 
   vnc_client->settings = guac_vnc_parse_args(user, args.size(), const_cast<const char**>(args.data()));
+  guac_user_free(user);
+
   std::thread(guac_vnc_client_thread, client).detach();
   StartWebSocketServer(*client, args);
 }
 
 void StartRdpClient(guac_client* client) {
-  char* argv[] = { static_cast<char*>("") };
-  guac_rdp_client_init(client, 0, argv);
+  guac_rdp_client_init(client);
 
   guac_rdp_client* rdp_client = static_cast<guac_rdp_client*>(client->data);
   const auto my_args = std::map<std::string, std::string>{
@@ -196,7 +203,9 @@ void StartRdpClient(guac_client* client) {
     args.push_back(it == my_args.end() ? "" : it->second.data());
   }
 
-  const auto user = guac_user_alloc();
+  const auto user =
+    std::unique_ptr<guac_user, decltype(&guac_user_free)>(
+                                      guac_user_alloc(), guac_user_free);
   //	user->socket = socket;
   user->client = client;
   //	user->owner  = params->owner;
@@ -204,12 +213,63 @@ void StartRdpClient(guac_client* client) {
   user->info.optimal_width = 800;
   user->info.optimal_height = 600;
 
-  rdp_client->settings = guac_rdp_parse_args(user, args.size(), const_cast<const char**>(args.data()));
+  rdp_client->settings = guac_rdp_parse_args(user.get(), args.size(), const_cast<const char**>(args.data()));
+
   std::thread(guac_rdp_client_thread, client).detach();
   StartWebSocketServer(*client, args);
 }
 
 int main()
+{
+  auto io_context = boost::asio::io_context(1);
+  auto stopping = std::atomic_bool();
+  auto work = boost::asio::make_work_guard(io_context);
+  using CollabVm::Server::GuacamoleClient;
+  auto guacamole_client = GuacamoleClient(io_context,
+    [](auto& guacamole_client)
+    {
+      guacamole_client.AddUser();
+    },
+    [&stopping, &io_context, &work](auto& guacamole_client)
+    {
+      if (stopping)
+      {
+        work.reset();
+      }
+      else
+      {
+        // guacamole_client.StartRDP();
+        guacamole_client.StartVNC();
+      }
+    });
+  /*
+  const auto args = std::unordered_map<std::string_view, std::string_view>{
+    {"hostname", "localhost"},
+    {"port", "3389"}
+  };
+  guacamole_client.StartRDP(args);
+  */
+  const auto args = std::unordered_map<std::string_view, std::string_view>{
+    {"hostname", "localhost"},
+    {"port", "5900"}
+  };
+  guacamole_client.StartVNC(args);
+  // guacamole_client.StartRDP(args);
+
+  auto interrupt_signal = boost::asio::signal_set(io_context, SIGINT, SIGTERM);
+  interrupt_signal.async_wait([&guacamole_client, &interrupt_signal, &stopping]
+    (auto error_code, auto signal)
+    {
+      stopping = true;
+      guacamole_client.Stop();
+    });
+
+  io_context.run();
+
+  return 0;
+}
+
+int test()
 {
 	const auto client = guac_client_alloc();
 	client->log_handler = [](guac_client* client, guac_client_log_level level,
@@ -235,7 +295,7 @@ int main()
 	};
 	client->socket = broadcast_socket;
 
-  // StartRdpClient(client);
-  StartVncClient(client);
+  StartRdpClient(client);
+  // StartVncClient(client);
 	return 0;
 }

@@ -24,6 +24,7 @@
 #include "CollabVmCommon.hpp"
 #include "CollabVmChatRoom.hpp"
 #include "Database/Database.h"
+#include "GuacamoleClient.hpp"
 #include "Recaptcha.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
@@ -1536,7 +1537,24 @@ namespace CollabVm::Server
 
       void Start()
       {
-        
+        const auto params = GetSetting(VmSetting::Setting::GUACAMOLE_PARAMETERS)
+                      .getGuacamoleParameters();
+        auto params_map = std::unordered_map<const char*, const char*>(params.size());
+        std::transform(params.begin(), params.end(),
+                       std::inserter(params_map, params_map.end()),
+          [](auto param)
+          {
+            return std::pair(param.getName().cStr(), param.getValue().cStr());
+          });
+        if (GetSetting(VmSetting::Setting::PROTOCOL).getProtocol()
+            == VmSetting::Protocol::RDP)
+        {
+          guacamole_client.StartRDP(params_map);
+        }
+        else
+        {
+          guacamole_client.StartVNC(params_map);
+        }
       }
 
       void Stop()
@@ -1699,6 +1717,7 @@ namespace CollabVm::Server
       CollabVmServerMessage::VmInfo::Builder vm_info_;
       std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
       capnp::List<VmSetting>::Builder settings_;
+      GuacamoleClient guacamole_client;
     };
 
     template <typename TClient>

@@ -51,8 +51,7 @@ set(${PROJECT_NAME}_ODB_HEADERS "${CMAKE_SOURCE_DIR}/Database/User.h" "${CMAKE_S
 add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
-set(BOOST_COMPONENTS system filesystem program_options date_time)
-find_package(Boost 1.66 REQUIRED COMPONENTS system filesystem program_options date_time)
+find_package(Boost 1.68 REQUIRED COMPONENTS system filesystem program_options date_time thread)
 add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 

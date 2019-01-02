@@ -684,8 +684,8 @@ class WebServer : public TThreadPool {
     typename TThreadPool::Strand,
     std::list<std::shared_ptr<TSocket>>> sockets_;
 
-  asio::ip::tcp::acceptor acceptor_;
+  boost::asio::ip::tcp::acceptor acceptor_;
   boost::filesystem::path doc_root_;
-  asio::signal_set interrupt_signal_;
+  boost::asio::signal_set interrupt_signal_;
 };
 }  // namespace CollabVm::Server
