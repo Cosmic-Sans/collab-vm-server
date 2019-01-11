@@ -241,6 +241,10 @@ int main()
         // guacamole_client.StartRDP();
         guacamole_client.StartVNC();
       }
+    },
+    [](const auto& guacamole_client, auto* message)
+    {
+      std::cout << message << std::endl;
     });
   /*
   const auto args = std::unordered_map<std::string_view, std::string_view>{

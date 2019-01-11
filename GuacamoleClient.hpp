@@ -28,15 +28,18 @@ extern "C" {
 
 namespace CollabVm::Server
 {
-template<typename TStartCallback, typename TStopCallback>
+template<typename TStartCallback, typename TStopCallback, typename TLogCallback>
 class GuacamoleClient final
 {
 public:
   GuacamoleClient(boost::asio::io_context& io_context,
-    TStartCallback&& start_callback, TStopCallback&& stop_callback)
+                  TStartCallback&& start_callback,
+                  TStopCallback&& stop_callback,
+                  TLogCallback&& log_callback)
     : io_context_(io_context),
       start_callback_(start_callback),
       stop_callback_(stop_callback),
+      log_callback_(log_callback),
       user_(nullptr, &guac_user_free),
       client_(nullptr, &guac_client_free)
   {
@@ -101,8 +104,8 @@ public:
     {
       return ssize_t(0);
     };
-    client_->join_handler(user, args_.size(),
-      const_cast<char**>(args_.data()));
+    client_->join_handler(user, args_.size(), const_cast<char**>(args_.data()));
+    client_->leave_handler(user);
   }
 private:
   static ssize_t SocketWriteHandler(guac_socket* socket, void* data)
@@ -216,6 +219,21 @@ private:
       return SocketWriteHandler(socket, data);
     };
     client_->socket = broadcast_socket;
+    client_->data = this;
+    client_->log_handler =
+      [](auto* client,
+         guac_client_log_level level,
+         const char* format,
+         va_list args)
+      {
+        auto& guacamole_client =
+          *static_cast<GuacamoleClient*>(client->data);
+        auto message = std::array<char, 2048>();
+        if (::vsnprintf(message.data(), sizeof(message), format, args) > 0)
+        {
+          guacamole_client.log_callback_(guacamole_client, message.data());
+        }
+      };
   }
     
   void CreateUser()
@@ -276,6 +294,7 @@ private:
   boost::asio::io_context& io_context_;
   TStartCallback start_callback_;
   TStopCallback stop_callback_;
+  TLogCallback log_callback_;
   std::unique_ptr<guac_user, decltype(&guac_user_free)> user_;
   std::unique_ptr<guac_client, decltype(&guac_client_free)> client_;
   std::vector<const char*> args_;
