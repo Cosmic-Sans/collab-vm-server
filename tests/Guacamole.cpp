@@ -274,13 +274,7 @@ int main()
     {"port", "3389"}
   };
   guacamole_client.StartRDP(args);
-  */
-  const auto args = std::unordered_map<std::string_view, std::string_view>{
-    {"hostname", "localhost"},
-    {"port", "5900"}
-  };
-  guacamole_client.StartVNC(args);
-  // guacamole_client.StartRDP(args);
+  // guacamole_client.StartVNC(args);
 
   auto interrupt_signal = boost::asio::signal_set(io_context, SIGINT, SIGTERM);
   interrupt_signal.async_wait([&guacamole_client, &interrupt_signal, &stopping]
