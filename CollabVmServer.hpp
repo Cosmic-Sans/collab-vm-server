@@ -28,11 +28,10 @@
 #include "Recaptcha.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
-#include "VmListProvider.hpp"
 
 namespace CollabVm::Server
 {
-  template <typename TServer, typename TVmListProvider=VmListProvider>
+  template <typename TServer>
   class CollabVmServer final : public TServer
   {
     using Strand = typename TServer::Strand;
@@ -795,7 +794,8 @@ namespace CollabVm::Server
               const auto vm_id = server_.db_.GetNewVmId();
               const auto initial_settings = message.getCreateVm();
               auto virtual_machine =
-                virtual_machines.AddAdminVirtualMachine(vm_id, initial_settings);
+                virtual_machines.AddAdminVirtualMachine(
+                  io_context_, vm_id, initial_settings);
               server_.db_.CreateVm(vm_id, virtual_machine->GetSettings());
 
               auto socket_message = CreateSharedSocketMessage();
@@ -1327,7 +1327,8 @@ namespace CollabVm::Server
         recaptcha_(TServer::io_context_, ssl_ctx_, ""),
         virtual_machines_(TServer::io_context_,
                           VirtualMachinesList<CollabVmSocket<typename TServer::
-                            TSocket>>::CreateVirtualMachinesList(db_)),
+                            TSocket>>::CreateVirtualMachinesList(
+                            TServer::io_context_, db_)),
         login_strand_(TServer::io_context_),
         viewing_admins_(TServer::io_context_),
         global_chat_room_(TServer::io_context_, global_channel_id),
@@ -1518,7 +1519,8 @@ namespace CollabVm::Server
     template <typename TClient>
     struct AdminVirtualMachine final : UserChannel<TClient>
     {
-      AdminVirtualMachine(const std::uint32_t id,
+      AdminVirtualMachine(boost::asio::io_context& io_context,
+                          const std::uint32_t id,
                           const CollabVmServerMessage::VmInfo::Builder
                           vm_info) : UserChannel<TClient>(id),
                                      vm_info_(vm_info),
@@ -1531,7 +1533,8 @@ namespace CollabVm::Server
                                        .initMessage()
                                        .initReadVmConfigResponse(
                                          capnp::Schema::from<VmSetting::Setting
-                                         >().getUnionFields().size()))
+                                         >().getUnionFields().size())),
+                            guacamole_client(io_context)
       {
       }
 
@@ -1539,7 +1542,7 @@ namespace CollabVm::Server
       {
         const auto params = GetSetting(VmSetting::Setting::GUACAMOLE_PARAMETERS)
                       .getGuacamoleParameters();
-        auto params_map = std::unordered_map<const char*, const char*>(params.size());
+        auto params_map = std::unordered_map<std::string_view, std::string_view>(params.size());
         std::transform(params.begin(), params.end(),
                        std::inserter(params_map, params_map.end()),
           [](auto param)
@@ -1717,13 +1720,47 @@ namespace CollabVm::Server
       CollabVmServerMessage::VmInfo::Builder vm_info_;
       std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
       capnp::List<VmSetting>::Builder settings_;
-      GuacamoleClient guacamole_client;
+
+      struct CollabVmGuacamoleClient final
+        : GuacamoleClient<CollabVmGuacamoleClient>
+      {
+        CollabVmGuacamoleClient(boost::asio::io_context& io_context)
+          : GuacamoleClient<CollabVmGuacamoleClient>(io_context)
+        {
+        }
+
+        void OnStart()
+        {
+          this->AddUser();
+        }
+
+        void OnStop()
+        {
+          /*
+          if (stopping_)
+          {
+            work_.reset();
+          }
+          else
+          */
+          {
+            this->StartRDP();
+            // StartVNC();
+          }
+        }
+
+        void OnLog(const std::string_view message)
+        {
+          std::cout << message << std::endl;
+        }
+      } guacamole_client;
     };
 
     template <typename TClient>
     struct VirtualMachinesList
     {
       static VirtualMachinesList<TClient> CreateVirtualMachinesList(
+        boost::asio::io_context& io_context,
         Database& db)
       {
         auto vm_list_message_builder = std::make_unique<capnp::
@@ -1733,7 +1770,8 @@ namespace CollabVm::Server
                            >>> virtual_machines;
         std::unordered_map<std::uint32_t, std::shared_ptr<AdminVirtualMachine<TClient
                            >>> admin_virtual_machines;
-        db.ReadVirtualMachines([&virtual_machines, &admin_virtual_machines,
+        db.ReadVirtualMachines(
+          [&io_context, &virtual_machines, &admin_virtual_machines,
             &vm_list_message_builder=*vm_list_message_builder,
             &admin_vm_list_message_builder=*admin_vm_list_message_builder](
           const auto total_virtual_machines,
@@ -1765,7 +1803,7 @@ namespace CollabVm::Server
               if (!admin_vm)
               {
                 admin_vm = std::make_shared<AdminVirtualMachine<CollabVmSocket<
-                  typename TServer::TSocket>>>(vm_setting.IDs.VmId,
+                  typename TServer::TSocket>>>(io_context, vm_setting.IDs.VmId,
                                                virtual_machine_list[vm_index]);
                 vm_config = admin_vm->GetSettings();
               }
@@ -1863,12 +1901,13 @@ namespace CollabVm::Server
       }
       */
 
-      auto AddAdminVirtualMachine(const std::uint32_t id,
+      auto AddAdminVirtualMachine(boost::asio::io_context& io_context,
+                                  const std::uint32_t id,
                                   capnp::List<VmSetting>::Reader
                                   initial_settings)
       {
-        auto vm = std::make_shared<AdminVirtualMachine<TClient>>(id,
-          vm_info_list_.Add());
+        auto vm = std::make_shared<AdminVirtualMachine<TClient>>(
+          io_context, id, vm_info_list_.Add());
         vm->SetInitialSettings(initial_settings);
         auto admin_vm_info = admin_vm_info_list_.Add();
         vm->SetAdminVmInfo(admin_vm_info);
@@ -2038,7 +2077,6 @@ namespace CollabVm::Server
     guests_;
     boost::asio::ssl::context ssl_ctx_;
     RecaptchaVerifier recaptcha_;
-    TVmListProvider vm_list_provider_;
     StrandGuard<VirtualMachinesList<CollabVmSocket<typename TServer::TSocket>>>
     virtual_machines_;
     Strand login_strand_;
