@@ -2,19 +2,13 @@ enable_testing()
 
 add_executable(recaptcha Recaptcha.cpp)
 target_include_directories(recaptcha PUBLIC ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${PROJECT_SOURCE_DIR}/submodules/beast/include ${Boost_INCLUDE_DIRS})
-target_link_libraries(recaptcha ${OPENSSL_LIBRARIES} ${Boost_LIBRARIES})
+target_link_libraries(recaptcha ${Boost_LIBRARIES} OpenSSL::SSL)
 add_test(recaptcha recaptcha)
 
 add_executable(totp Totp.cpp)
 target_include_directories(totp PUBLIC ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/submodules/GSL/include)
-target_link_libraries(totp ${OPENSSL_LIBRARIES})
+target_link_libraries(totp OpenSSL::Crypto)
 add_test(totp totp)
-
-add_executable(capnp-test capnp.cpp ${CAPNP_SRCS} ${CAPNP_HDRS})
-target_include_directories(capnp-test PUBLIC ${PROJECT_SOURCE_DIR} ${CAPNP_SRCS} ${CAPNP_HDRS})
-target_link_libraries(capnp-test CapnProto::capnp collab-vm-common)
-add_dependencies(capnp-test collab-vm-common)
-add_test(capnp-test capnp-test)
 
 add_executable(guac-test Guacamole.cpp)
 message(STATUS "LIBVNCSERVER_INCLUDE_DIRS: ${LIBVNCSERVER_INCLUDE_DIRS}")

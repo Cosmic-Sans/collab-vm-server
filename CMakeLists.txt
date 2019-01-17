@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.7)
 
+# Create a list containing all variables passed as command line arguments
+# to this script so they can be forwarded to ExternalProject_Add()
+# This must be at the beginning of this script.
+# Source: https://cmake.org/pipermail/cmake/2018-January/067002.html
+get_cmake_property(vars CACHE_VARIABLES)
+foreach(var ${vars})
+  get_property(currentHelpString CACHE "${var}" PROPERTY HELPSTRING)
+    if("${currentHelpString}" MATCHES "No help, variable specified on the command line." OR "${currentHelpString}" STREQUAL "")
+        if(NOT "${var}" MATCHES "CMAKE_MAKE_PROGRAM")
+          list(APPEND CL_ARGS "-D${var}:STRING=${${var}}")
+        endif()
+    endif()
+endforeach()
+
 set(COLLAB_VM_COMMON "submodules/collab-vm-common" CACHE PATH "Path to collab-vm-common directory")
 set(COLLAB_VM_COMMON_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/submodules/collab-vm-common" CACHE PATH "Path to output collab-vm-common binaries")
 
@@ -31,8 +45,8 @@ endif()
 target_include_directories(argon2 PUBLIC ${ARGON2_INCLUDE_DIR})
 
 find_package(OpenSSL REQUIRED)
+message(STATUS "OPENSSL_INCLUDE_DIR: ${OPENSSL_INCLUDE_DIR}")
 
-set(SQLite3_DIR "${SQLITE3_VCPKG}/share/sqlite3")
 find_package(SQLite3 REQUIRED CONFIG)
 
 set(ODB_COMPONENTS libodb sqlite)
@@ -51,7 +65,8 @@ set(${PROJECT_NAME}_ODB_HEADERS "${CMAKE_SOURCE_DIR}/Database/User.h" "${CMAKE_S
 add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
-find_package(Boost 1.68 REQUIRED COMPONENTS system filesystem program_options date_time thread)
+add_compile_definitions(BOOST_ALL_NO_LIB)
+find_package(Boost 1.67 REQUIRED COMPONENTS system filesystem program_options date_time thread)
 add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
@@ -83,12 +98,12 @@ find_package(PNG REQUIRED)
 
 find_library(CAIRO_LIBRARY cairo REQUIRED)
 function(copy_cairo_dlls TARGET)
-	if(MSVC AND ${CMAKE_BUILD_TYPE} MATCHES "Debug|RelWithDebInfo")
+	if(MSVC AND CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
 		get_filename_component(CAIRO_LIBRARY_DIR ${CAIRO_LIBRARY} DIRECTORY)
 		set(CAIRO_BINARY_DIR "${CAIRO_LIBRARY_DIR}/../bin")
 		foreach(DEPENDENT_CAIRO_DLL IN ITEMS cairo expat libpng16 libbz2 libiconv libcharset freetype pixman-1 fontconfig zlib1)
 			add_custom_command(TARGET ${TARGET} PRE_LINK
-					COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CAIRO_BINARY_DIR}/${DEPENDENT_CAIRO_DLL}.dll" "${CMAKE_CURRENT_BINARY_DIR}"
+					COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CAIRO_BINARY_DIR}/${DEPENDENT_CAIRO_DLL}.dll" "$<TARGET_FILE_DIR:${TARGET}>"
 				)
 		endforeach()
 	endif()
@@ -114,21 +129,25 @@ odb_compile(
 # headers inside of the Database subdirectory
 target_include_directories(${PROJECT_NAME} PUBLIC Database)
 
-set(external_cxx_flags -DCMAKE_CXX_FLAGS_DEBUG=/MDd -DCMAKE_C_FLAGS_RELEASE=/MT -DCMAKE_CXX_FLAGS_RELEASE=/MT)
-
+set(LIBVNCSERVER_CMAKE_CACHE_ARGS ${CL_ARGS})
+list(FILTER LIBVNCSERVER_CMAKE_CACHE_ARGS EXCLUDE REGEX "CMAKE_INSTALL_PREFIX")
 set(LIBVNCSERVER_INSTALL_DIR ${CMAKE_BINARY_DIR}/libvncserver)
 include(ExternalProject)
 set(LIBVNCSERVER_LIBRARIES ${LIBVNCSERVER_INSTALL_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}vncclient${CMAKE_STATIC_LIBRARY_SUFFIX})
 set(LIBVNCSERVER_INCLUDE_DIRS ${LIBVNCSERVER_INSTALL_DIR}/include)
+if (WIN32)
+  set(LIBVNCSERVER_CMAKE_EXE_LINKER_FLAGS -DCMAKE_EXE_LINKER_FLAGS:STRING=crypt32.lib)
+endif()
 ExternalProject_Add(libvncserver SOURCE_DIR "${CMAKE_SOURCE_DIR}/submodules/libvncserver"
-	CMAKE_ARGS
-		"-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-		"-DCMAKE_CONFIGURATION_TYPES=${CMAKE_BUILD_TYPE}"
-		-DCMAKE_INSTALL_PREFIX=${LIBVNCSERVER_INSTALL_DIR} ${external_cxx_flags}
+  CMAKE_CACHE_ARGS ${LIBVNCSERVER_CMAKE_CACHE_ARGS}
+		-DCMAKE_INSTALL_PREFIX:STRING=${LIBVNCSERVER_INSTALL_DIR}
+		${LIBVNCSERVER_CMAKE_EXE_LINKER_FLAGS}
 	BUILD_BYPRODUCTS ${LIBVNCSERVER_LIBRARIES}
 	)
 add_dependencies(${PROJECT_NAME} libvncserver)
 
+set(FREERDP_CMAKE_CACHE_ARGS ${CL_ARGS})
+list(FILTER FREERDP_CMAKE_CACHE_ARGS EXCLUDE REGEX "CMAKE_INSTALL_PREFIX")
 set(FREERDP_INSTALL_DIR ${CMAKE_BINARY_DIR}/FreeRDP)
 set(FREERDP_LIBRARIES
 	${FREERDP_INSTALL_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}freerdp2${CMAKE_STATIC_LIBRARY_SUFFIX}
@@ -137,22 +156,18 @@ set(FREERDP_LIBRARIES
 	ntdsapi ws2_32 rpcrt4 dbghelp)
 ExternalProject_Add(FreeRDP SOURCE_DIR "${CMAKE_SOURCE_DIR}/submodules/FreeRDP"
 	DEPENDS OpenSSL::SSL
-	CMAKE_ARGS
-		"-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-		"-DCMAKE_CONFIGURATION_TYPES=${CMAKE_BUILD_TYPE}"
-		#"-DCMAKE_C_FLAGS=/D_WIN32_WINNT=NTDDI_VISTA /DNTDDI_VERSION=WIN32_WINNT_VISTA"
-		"-DCMAKE_C_FLAGS=/D_WIN32_WINNT=0x0600 /DNTDDI_VERSION=0x06000000"
-		-DCMAKE_INSTALL_PREFIX=${FREERDP_INSTALL_DIR} ${external_cxx_flags} -DMSVC_RUNTIME=$<IF:$<CONFIG:RELEASE>,static,dynamic> -DBUILD_SHARED_LIBS=$<IF:$<CONFIG:RELEASE>,OFF,ON>
-	# CMake's FindOpenSSL doesn't set OPENSSL_ROOT_DIR but FreeRDP's FindOpenSSL requires it
-		-DOPENSSL_ROOT_DIR=${OPENSSL_INCLUDE_DIR}/..
+	CMAKE_CACHE_ARGS ${FREERDP_CMAKE_CACHE_ARGS}
+		-DCMAKE_INSTALL_PREFIX:STRING=${FREERDP_INSTALL_DIR}
+    -DMSVC_RUNTIME:STRING=$<IF:$<CONFIG:RELEASE>,static,dynamic>
+    -DBUILD_SHARED_LIBS:STRING=$<IF:$<CONFIG:RELEASE>,OFF,ON>
 	BUILD_BYPRODUCTS ${FREERDP_LIBRARIES}
 	)
 function(copy_freerdp_dlls TARGET)
-	if(MSVC AND ${CMAKE_BUILD_TYPE} MATCHES "Debug|RelWithDebInfo")
+	if(MSVC AND CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
 		add_custom_command(TARGET ${TARGET} PRE_LINK
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp2.dll" "${CMAKE_CURRENT_BINARY_DIR}"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp-client2.dll" "${CMAKE_CURRENT_BINARY_DIR}"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/winpr2.dll" "${CMAKE_CURRENT_BINARY_DIR}"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp-client2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/winpr2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
 			)
 	endif()
 endfunction()
@@ -199,5 +214,10 @@ target_link_libraries(${PROJECT_NAME}
 	argon2 ${Boost_LIBRARIES} ${CAIRO_LIBRARY} CapnProto::capnp collab-vm-common
 	${FREERDP_LIBRARIES} guacamole ${LIBVNCSERVER_LIBRARIES} OpenSSL::Crypto OpenSSL::SSL
 	odb::libodb odb::libodb-sqlite sqlite3)
+
+install(TARGETS ${PROJECT_NAME} DESTINATION .)
+install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION . OPTIONAL)
+install(DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>/
+        DESTINATION . FILES_MATCHING PATTERN *.dll)
 
 add_subdirectory(tests)
