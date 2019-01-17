@@ -22,7 +22,7 @@ install:
         7z x C:\Tools\odb-2.4.0-i686-windows.zip -oC:\Tools\ 
       }
 cache: 
-  - C:\Tools\vcpkg\
+  - C:\Tools\vcpkg\installed\
   - C:\Tools\odb-2.4.0-i686-windows\
 build_script:
   - mkdir build
