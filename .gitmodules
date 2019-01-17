@@ -2,27 +2,23 @@
 	path = submodules/argon2
 	url = https://github.com/P-H-C/phc-winner-argon2.git
 	branch = master
-[submodule "submodules/GSL"]
-	path = submodules/GSL
-	url = https://github.com/Microsoft/GSL.git
+[submodule "submodules/collab-vm-common"]
+	path = submodules/collab-vm-common
+	url = https://github.com/Cosmic-Sans/collab-vm-common.git
 	branch = master
 [submodule "submodules/FreeRDP"]
 	path = submodules/FreeRDP
 	url = https://github.com/FreeRDP/FreeRDP.git
 	branch = master
-[submodule "submodules/libvncserver"]
-	path = submodules/libvncserver
-	url = https://github.com/LibVNC/libvncserver.git
+[submodule "submodules/GSL"]
+	path = submodules/GSL
+	url = https://github.com/Microsoft/GSL.git
 	branch = master
-[submodule "submodules/capnproto"]
-	path = submodules/capnproto
-	url = https://github.com/capnproto/capnproto.git
-	branch = release-0.6.1
-[submodule "guacamole-server"]
+[submodule "submodules/guacamole-server"]
 	path = submodules/guacamole-server
 	url = https://github.com/Cosmic-Sans/guacamole-server.git
 	branch = master
-[submodule "collab-vm-shared"]
-	path = submodules/collab-vm-shared
-	url = https://github.com/Cosmic-Sans/collab-vm-shared.git
+[submodule "submodules/libvncserver"]
+	path = submodules/libvncserver
+	url = https://github.com/LibVNC/libvncserver.git
 	branch = master

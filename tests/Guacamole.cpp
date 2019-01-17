@@ -219,34 +219,56 @@ void StartRdpClient(guac_client* client) {
   StartWebSocketServer(*client, args);
 }
 
+
+struct TestGuacamoleClient
+  final : CollabVm::Server::GuacamoleClient<TestGuacamoleClient>
+{
+  TestGuacamoleClient(boost::asio::io_context& io_context,
+    std::atomic_bool& stopping,
+    boost::asio::executor_work_guard<
+      boost::asio::io_context::executor_type>& work)
+    : GuacamoleClient<TestGuacamoleClient>(io_context),
+      stopping_(stopping),
+      work_(work)
+  {
+  }
+
+  void OnStart()
+  {
+    AddUser();
+  }
+
+  void OnStop()
+  {
+    if (stopping_)
+    {
+      work_.reset();
+    }
+    else
+    {
+      StartRDP();
+      // StartVNC();
+    }
+  }
+
+  void OnLog(const std::string_view message)
+  {
+    std::cout << message << std::endl;
+  }
+
+private:
+  std::atomic_bool& stopping_;
+  boost::asio::executor_work_guard<
+    boost::asio::io_context::executor_type>& work_;
+};
+
 int main()
 {
   auto io_context = boost::asio::io_context(1);
   auto stopping = std::atomic_bool();
   auto work = boost::asio::make_work_guard(io_context);
   using CollabVm::Server::GuacamoleClient;
-  auto guacamole_client = GuacamoleClient(io_context,
-    [](auto& guacamole_client)
-    {
-      guacamole_client.AddUser();
-    },
-    [&stopping, &io_context, &work](auto& guacamole_client)
-    {
-      if (stopping)
-      {
-        work.reset();
-      }
-      else
-      {
-        // guacamole_client.StartRDP();
-        guacamole_client.StartVNC();
-      }
-    },
-    [](const auto& guacamole_client, auto* message)
-    {
-      std::cout << message << std::endl;
-    });
-  /*
+  auto guacamole_client = TestGuacamoleClient(io_context, stopping, work);
   const auto args = std::unordered_map<std::string_view, std::string_view>{
     {"hostname", "localhost"},
     {"port", "3389"}
