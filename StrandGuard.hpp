@@ -23,11 +23,10 @@ struct StrandGuard {
 
   template <typename THandler>
   auto wrap(THandler&& handler) {
-    return [ this, handler = std::forward<THandler>(handler) ](auto&&... args) mutable {
-      dispatch([ handler = std::forward<THandler>(handler), args... ](auto&& obj) mutable {
-        handler(obj, std::forward<decltype(args)>(args)...);
+    return boost::asio::bind_executor(strand_,
+      [this, handler = std::forward<THandler>(handler)](auto&&... args) mutable {
+        handler(obj_, std::forward<decltype(args)>(args)...);
       });
-    };
   }
 
   bool running_in_this_thread() const {
