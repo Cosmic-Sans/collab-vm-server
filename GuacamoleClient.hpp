@@ -84,7 +84,8 @@ public:
     }
   }
 
-  void AddUser()
+  template<typename TJoinInstructionsCallback>
+  void AddUser(TJoinInstructionsCallback&& callback)
   {
     /*
     auto user =
@@ -94,25 +95,49 @@ public:
     const auto user = guac_user_alloc();
     user->client = client_.get();
     user->socket = guac_socket_alloc();
+    struct SocketData
+    {
+      SocketData(GuacamoleClient& guacamole_client, TJoinInstructionsCallback&& callback)
+        : guacamole_client(guacamole_client),
+          callback(callback)
+      {}
+      GuacamoleClient& guacamole_client;
+      TJoinInstructionsCallback callback;
+    } socket_data(*this, std::move(callback));
+    user->socket->data = &socket_data;
     user->socket->write_handler = [](auto* socket, auto* data)
     {
+      auto& socket_data = *static_cast<SocketData*>(socket->data);
+      auto& guacamole_client = socket_data.guacamole_client;
+      auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
+      socket_data.callback(std::move(message_builder));
       return ssize_t(0);
     };
+    user->info.optimal_resolution = 96;
+    user->info.optimal_width = 800;
+    user->info.optimal_height = 600;
+    const char* audio_mimetypes[] = {
+      static_cast<const char*>("audio/L16")
+    };
+    user->info.audio_mimetypes = audio_mimetypes;
     client_->join_handler(user, args_.size(), const_cast<char**>(args_.data()));
     client_->leave_handler(user);
+    guac_user_free(user);
   }
 private:
   static ssize_t SocketWriteHandler(guac_socket* socket, void* data)
   {
+    auto& guacamole_client =
+      *static_cast<GuacamoleClient*>(socket->data);
     auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
     auto instr = message_builder.getRoot<Guacamole::GuacServerInstruction>();
     if (   instr.which() == Guacamole::GuacServerInstruction::Which::DISCONNECT
         || instr.which() == Guacamole::GuacServerInstruction::Which::ERROR)
     {
-      auto& guacamole_client =
-        *static_cast<GuacamoleClient*>(socket->data);
       guacamole_client.state_ = State::kStopping;
     }
+    static_cast<TCallbacks&>(guacamole_client).OnInstruction(
+      std::move(message_builder));
     return ssize_t(0);
   }
 
@@ -224,7 +249,8 @@ private:
           *static_cast<GuacamoleClient*>(client->data);
         auto message = std::array<char, 2048>();
         if (const auto message_len = ::vsnprintf(
-                message.data(), sizeof(message), format, args) > 0)
+                message.data(), sizeof(message), format, args);
+            message_len > 0)
         {
           static_cast<TCallbacks&>(guacamole_client).OnLog(
             std::string_view(message.data(), message_len));
