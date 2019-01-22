@@ -14,6 +14,8 @@ extern "C" {
 # undef min
 # undef max
 #endif
+#include <libguac/user-handlers.h>
+
 #include <atomic>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
@@ -84,35 +86,61 @@ public:
     }
   }
 
-  void AddUser()
+  template<typename TJoinInstructionsCallback>
+  void AddUser(TJoinInstructionsCallback&& callback)
   {
-    /*
-    auto user =
-      std::unique_ptr<guac_user, decltype(&guac_user_free)>(
-        guac_user_alloc(), guac_user_free);
-    */
+    assert(state_ == State::kRunning);
     const auto user = guac_user_alloc();
     user->client = client_.get();
     user->socket = guac_socket_alloc();
+    struct SocketData
+    {
+      SocketData(GuacamoleClient& guacamole_client, TJoinInstructionsCallback&& callback)
+        : guacamole_client(guacamole_client),
+          callback(callback)
+      {}
+      GuacamoleClient& guacamole_client;
+      TJoinInstructionsCallback callback;
+    } socket_data(*this, std::move(callback));
+    user->socket->data = &socket_data;
     user->socket->write_handler = [](auto* socket, auto* data)
     {
+      auto& socket_data = *static_cast<SocketData*>(socket->data);
+      auto& guacamole_client = socket_data.guacamole_client;
+      auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
+      socket_data.callback(std::move(message_builder));
       return ssize_t(0);
     };
+    user->info.optimal_resolution = 96;
+    user->info.optimal_width = 800;
+    user->info.optimal_height = 600;
+    const char* audio_mimetypes[] = {
+      static_cast<const char*>("audio/L16")
+    };
+    user->info.audio_mimetypes = audio_mimetypes;
     client_->join_handler(user, args_.size(), const_cast<char**>(args_.data()));
     client_->leave_handler(user);
+    guac_user_free(user);
+  }
+
+  void ReadInstruction(Guacamole::GuacClientInstruction::Reader instr)
+  {
+    guac_call_instruction_handler(user_.get(), instr);
   }
 private:
   static ssize_t SocketWriteHandler(guac_socket* socket, void* data)
   {
+    auto& guacamole_client =
+      *static_cast<GuacamoleClient*>(socket->data);
     auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
     auto instr = message_builder.getRoot<Guacamole::GuacServerInstruction>();
     if (   instr.which() == Guacamole::GuacServerInstruction::Which::DISCONNECT
         || instr.which() == Guacamole::GuacServerInstruction::Which::ERROR)
     {
-      auto& guacamole_client =
-        *static_cast<GuacamoleClient*>(socket->data);
       guacamole_client.state_ = State::kStopping;
     }
+    static_cast<TCallbacks&>(guacamole_client).OnInstruction(
+      std::move(message_builder));
     return ssize_t(0);
   }
 
@@ -224,7 +252,8 @@ private:
           *static_cast<GuacamoleClient*>(client->data);
         auto message = std::array<char, 2048>();
         if (const auto message_len = ::vsnprintf(
-                message.data(), sizeof(message), format, args) > 0)
+                message.data(), sizeof(message), format, args);
+            message_len > 0)
         {
           static_cast<TCallbacks&>(guacamole_client).OnLog(
             std::string_view(message.data(), message_len));
@@ -243,25 +272,8 @@ private:
     static const char* audio_mimetypes[1] = {
       static_cast<const char*>("audio/L16")
     };
-
     user_->info.audio_mimetypes = audio_mimetypes;
-
-    auto* guac_socket = guac_socket_alloc();
-    /*
-    guac_socket->data = &websocket;
-    guac_socket->write_handler = [](auto* guac_socket, auto* data)
-    {
-      auto& websocket = *static_cast<boost::beast::websocket::stream<boost::asio::ip::tcp::socket>*>(guac_socket->data);
-      auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
-      const auto array = capnp::messageToFlatArray(message_builder);
-      const boost::asio::const_buffer buffers(array.asBytes().begin(), array.asBytes().size());
-      //auto printed = capnp::prettyPrint(message_builder.getRoot<Guacamole::GuacServerInstruction>()).flatten();
-      boost::system::error_code ec;
-      ssize_t written = websocket.write(buffers, ec);
-      return ec ? 0 : written;
-    };
-  */
-    user_->socket = guac_socket;
+    user_->socket = guac_socket_alloc();
   }
 
   static std::vector<const char*> CreateArgsArray(

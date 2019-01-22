@@ -1,6 +1,4 @@
 #pragma once
-#include <memory>
-#include <utility>
 #include <boost/asio/io_context.hpp>
 
 template <typename TStrand, typename T>
@@ -11,14 +9,14 @@ struct StrandGuard {
 
   template <typename TCompletionHandler>
   void dispatch(TCompletionHandler&& handler) {
-    strand_.dispatch(
-        [ this, handler = std::forward<TCompletionHandler>(handler) ]() mutable { handler(obj_); }, std::allocator<TCompletionHandler>());
+    boost::asio::dispatch(strand_,
+        [ this, handler = std::forward<TCompletionHandler>(handler) ]() mutable { handler(obj_); });
   }
 
   template <typename TCompletionHandler>
   void post(TCompletionHandler&& handler) {
-    strand_.post(
-        [ this, handler = std::forward<TCompletionHandler>(handler) ]() mutable { handler(obj_); }, std::allocator<TCompletionHandler>());
+    boost::asio::post(strand_,
+        [ this, handler = std::forward<TCompletionHandler>(handler) ]() mutable { handler(obj_); });
   }
 
   template <typename THandler>

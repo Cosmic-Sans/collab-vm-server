@@ -1534,7 +1534,7 @@ namespace CollabVm::Server
                                        .initReadVmConfigResponse(
                                          capnp::Schema::from<VmSetting::Setting
                                          >().getUnionFields().size())),
-                            guacamole_client(io_context)
+                            guacamole_client_(io_context)
       {
       }
 
@@ -1552,17 +1552,17 @@ namespace CollabVm::Server
         if (GetSetting(VmSetting::Setting::PROTOCOL).getProtocol()
             == VmSetting::Protocol::RDP)
         {
-          guacamole_client.StartRDP(params_map);
+          guacamole_client_.StartRDP(params_map);
         }
         else
         {
-          guacamole_client.StartVNC(params_map);
+          guacamole_client_.StartVNC(params_map);
         }
       }
 
       void Stop()
       {
-        
+        guacamole_client_.Stop();
       }
 
       capnp::List<VmSetting>::Builder GetSettings()
@@ -1731,7 +1731,14 @@ namespace CollabVm::Server
 
         void OnStart()
         {
-          this->AddUser();
+          // this->AddUser();
+          this->AddUser([](capnp::MallocMessageBuilder&& message_builder)
+            {
+              /*
+              send(std::make_shared<kj::Array<capnp::word>>(
+                capnp::messageToFlatArray(message_builder)));
+            */
+            });
         }
 
         void OnStop()
@@ -1753,7 +1760,21 @@ namespace CollabVm::Server
         {
           std::cout << message << std::endl;
         }
-      } guacamole_client;
+
+        void OnInstruction(capnp::MallocMessageBuilder&& message_builder)
+        {
+          auto message = std::make_shared<kj::Array<capnp::word>>(
+            capnp::messageToFlatArray(message_builder));
+          sockets_.dispatch(
+            [message = std::move(message)](auto& websockets)
+            {
+              for (auto& websocket : websockets)
+              {
+                websocket.Send(message);
+              }
+            });
+        }
+      } guacamole_client_;
     };
 
     template <typename TClient>

@@ -489,18 +489,27 @@ struct ThreadPool {
   }
 
   struct NullStrand {
-    explicit NullStrand(asio::io_context& io_context)
+    explicit NullStrand(boost::asio::io_context& io_context)
         : io_context_(io_context) {}
+
+    boost::asio::io_context& context() const {
+      return io_context_;
+    }
 
     static bool running_in_this_thread() { return true; }
 
     template <typename TCompletionHandler, typename TAllocator>
-    void dispatch(TCompletionHandler&& handler, TAllocator) {
+    void dispatch(TCompletionHandler&& handler, TAllocator) const {
 			boost::asio::dispatch(io_context_, std::forward<TCompletionHandler>(handler));
     }
 
     template <typename TCompletionHandler, typename TAllocator>
-    void post(TCompletionHandler&& handler, TAllocator) {
+    void post(TCompletionHandler&& handler, TAllocator) const {
+      boost::asio::post(io_context_, std::forward<TCompletionHandler>(handler));
+    }
+
+    template <typename TCompletionHandler, typename TAllocator>
+    void defer(TCompletionHandler&& handler, TAllocator) const {
       boost::asio::post(io_context_, std::forward<TCompletionHandler>(handler));
     }
 
@@ -509,6 +518,11 @@ struct ThreadPool {
       return std::forward(handler);
     }
 
+    void on_work_started() const {
+    }
+
+    void on_work_finished() const {
+    }
    private:
     asio::io_context& io_context_;
   };
