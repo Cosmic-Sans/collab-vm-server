@@ -23,6 +23,7 @@
 #include "CollabVm.capnp.h"
 #include "CollabVmCommon.hpp"
 #include "CollabVmChatRoom.hpp"
+#include "SocketMessage.hpp"
 #include "Database/Database.h"
 #include "GuacamoleClient.hpp"
 #include "Recaptcha.hpp"
@@ -169,7 +170,7 @@ namespace CollabVm::Server
         {
           const auto channel_id = message.getConnectToChannel();
           auto connect_to_channel = [this, self = shared_from_this(), channel_id](){
-            auto socket_message = CreateSharedSocketMessage();
+            auto socket_message = SocketMessage::CreateShared();
             auto& message_builder = socket_message->GetMessageBuilder();
             auto connect_result =
               message_builder.initRoot<CollabVmServerMessage>()
@@ -241,7 +242,7 @@ namespace CollabVm::Server
               ](auto& guests)
               {
                 auto guests_it = guests.find(new_username);
-                auto socket_message = CreateSharedSocketMessage();
+                auto socket_message = SocketMessage::CreateShared();
                 auto message = socket_message->GetMessageBuilder()
                                              .initRoot<
                                                CollabVmServerMessage
@@ -277,7 +278,7 @@ namespace CollabVm::Server
                   username_,
                   change_password_request.getOldPassword(),
                   change_password_request.getNewPassword());
-                auto socket_message = CreateSharedSocketMessage();
+                auto socket_message = SocketMessage::CreateShared();
                 socket_message->GetMessageBuilder()
                   .initRoot<CollabVmServerMessage>()
                   .initMessage().setChangePasswordResponse(success);
@@ -421,7 +422,7 @@ namespace CollabVm::Server
                                 SendChatChannelId(sender_id);
 
                                 auto socket_message =
-                                  CreateSharedSocketMessage();
+                                  SocketMessage::CreateShared();
                                 auto channel_message =
                                   socket_message
                                   ->GetMessageBuilder()
@@ -476,7 +477,7 @@ namespace CollabVm::Server
                   ](auto& channel)
                 {
                   auto& chat_room = channel.GetChatRoom();
-                  auto new_chat_message = CreateSharedSocketMessage();
+                  auto new_chat_message = SocketMessage::CreateShared();
                   auto chat_room_message =
                     new_chat_message->GetMessageBuilder()
                                     .initRoot<CollabVmServerMessage>()
@@ -520,7 +521,7 @@ namespace CollabVm::Server
               [this, self = shared_from_this()](auto& virtual_machines)
               {
                 QueueMessage(
-                  CreateCopiedSocketMessage(
+                  SocketMessage::CopyFromMessageBuilder(
                     virtual_machines.GetMessageBuilder()));
               });
             break;
@@ -538,7 +539,7 @@ namespace CollabVm::Server
                 buffer = std::move(buffer), username, password
               ](bool is_valid) mutable
               {
-                auto socket_message = CreateSharedSocketMessage();
+                auto socket_message = SocketMessage::CreateShared();
                 auto& message_builder = socket_message->
                   GetMessageBuilder();
                 auto login_response =
@@ -626,7 +627,7 @@ namespace CollabVm::Server
                 {
                   return;
                 }
-                auto response = CreateSharedSocketMessage();
+                auto response = SocketMessage::CreateShared();
                 auto& message_builder = response->GetMessageBuilder();
                 auto registration_result = message_builder.initRoot<
                   CollabVmServerMessage::Message>()
@@ -719,7 +720,7 @@ namespace CollabVm::Server
             server_.settings_.dispatch(
               [ this, self = shared_from_this() ](auto& settings)
               {
-                QueueMessage(CreateCopiedSocketMessage(
+                QueueMessage(SocketMessage::CopyFromMessageBuilder(
                   settings.GetServerSettingsMessageBuilder()));
               });
             if (!is_viewing_server_config)
@@ -752,7 +753,7 @@ namespace CollabVm::Server
             {
               settings.UpdateServerSettings<ServerSetting>(
                 changed_settings);
-              auto config_message = CreateCopiedSocketMessage(
+              auto config_message = SocketMessage::CopyFromMessageBuilder(
                 settings.GetServerSettingsMessageBuilder());
               // Broadcast the config changes to all other admins viewing the
               // admin panel
@@ -798,7 +799,7 @@ namespace CollabVm::Server
                   io_context_, vm_id, initial_settings);
               server_.db_.CreateVm(vm_id, virtual_machine->GetSettings());
 
-              auto socket_message = CreateSharedSocketMessage();
+              auto socket_message = SocketMessage::CreateShared();
               socket_message->GetMessageBuilder()
                 .initRoot<CollabVmServerMessage>().initMessage()
                 .setCreateVmResponse(vm_id);
@@ -832,7 +833,7 @@ namespace CollabVm::Server
                 }
                 auto& message_builder = admin_virtual_machine->
                                        GetMessageBuilder();
-                QueueMessage(CreateCopiedSocketMessage(message_builder));
+                QueueMessage(SocketMessage::CopyFromMessageBuilder(message_builder));
               });
           }
           break;
@@ -931,7 +932,7 @@ namespace CollabVm::Server
           if (is_admin_)
           {
             auto invite = message.getCreateInvite();
-            auto socket_message = CreateSharedSocketMessage();
+            auto socket_message = SocketMessage::CreateShared();
             auto invite_result = socket_message->GetMessageBuilder()
                                                .initRoot<CollabVmServerMessage
                                                >()
@@ -955,7 +956,7 @@ namespace CollabVm::Server
         case CollabVmClientMessage::Message::READ_INVITES:
           if (is_admin_)
           {
-            auto socket_message = CreateSharedSocketMessage();
+            auto socket_message = SocketMessage::CreateShared();
             auto response = socket_message->GetMessageBuilder()
                                           .initRoot<CollabVmServerMessage>()
                                           .initMessage();
@@ -981,7 +982,7 @@ namespace CollabVm::Server
           if (is_admin_)
           {
             const auto invite = message.getUpdateInvite();
-            auto socket_message = CreateSharedSocketMessage();
+            auto socket_message = SocketMessage::CreateShared();
             const auto invite_id = message.getDeleteInvite().asChars();
             const auto result = server_.db_.UpdateInvite(
               std::string(
@@ -1014,7 +1015,7 @@ namespace CollabVm::Server
         case CollabVmClientMessage::Message::READ_RESERVED_USERNAMES:
           if (is_admin_)
           {
-            auto socket_message = CreateSharedSocketMessage();
+            auto socket_message = SocketMessage::CreateShared();
             auto response = socket_message->GetMessageBuilder()
                                           .initRoot<CollabVmServerMessage>()
                                           .initMessage();
@@ -1049,7 +1050,7 @@ namespace CollabVm::Server
     private:
       void SendChatChannelId(const std::uint32_t id)
       {
-        auto socket_message = CreateSharedSocketMessage();
+        auto socket_message = SocketMessage::CreateShared();
         auto& message_builder = socket_message->GetMessageBuilder();
         auto message = message_builder.initRoot<CollabVmServerMessage>()
                                       .initMessage()
@@ -1061,7 +1062,7 @@ namespace CollabVm::Server
       void SendChatMessageResponse(
         CollabVmServerMessage::ChatMessageResponse result)
       {
-        auto socket_message = CreateSharedSocketMessage();
+        auto socket_message = SocketMessage::CreateShared();
         socket_message->GetMessageBuilder()
                       .initRoot<CollabVmServerMessage>()
                       .initMessage()
@@ -1075,7 +1076,7 @@ namespace CollabVm::Server
         auto& message_builder = virtual_machines.GetAdminVirtualMachineInfo();
         auto admin_vms = message_builder.getRoot<CollabVmServerMessage>().getMessage().getReadVmsResponse();
         const auto count = admin_vms.size();
-        auto socket_message = CreateCopiedSocketMessage(
+        auto socket_message = SocketMessage::CopyFromMessageBuilder(
           message_builder);
         QueueMessage(socket_message);
       }
@@ -1109,81 +1110,6 @@ namespace CollabVm::Server
           TSocket::shared_from_this());
       }
 
-      struct SocketMessage : std::enable_shared_from_this<SocketMessage>
-      {
-      protected:
-        ~SocketMessage() = default;
-
-      public:
-        virtual std::vector<boost::asio::const_buffer>& GetBuffers(
-          CapnpMessageFrameBuilder<>&) = 0;
-      };
-
-    struct CopiedSocketMessage final : SocketMessage {
-      virtual ~CopiedSocketMessage() = default;
-
-      CopiedSocketMessage(capnp::MallocMessageBuilder& message_builder)
-          : buffer_(capnp::messageToFlatArray(message_builder)),
-            framed_buffers_(
-                {boost::asio::const_buffer(buffer_.asBytes().begin(),
-                                           buffer_.asBytes().size())}) {}
-      std::vector<boost::asio::const_buffer>& GetBuffers(
-          CapnpMessageFrameBuilder<>&) override {
-        return framed_buffers_;
-      }
-
-     private:
-      kj::Array<capnp::word> buffer_;
-      std::vector<boost::asio::const_buffer> framed_buffers_;
-    };
-
-      static std::shared_ptr<CopiedSocketMessage> CreateCopiedSocketMessage(
-        capnp::MallocMessageBuilder& message_builder)
-      {
-        return std::make_shared<CopiedSocketMessage>(message_builder);
-      }
-
-      struct SharedSocketMessage final : SocketMessage
-      {
-        std::vector<boost::asio::const_buffer>& GetBuffers(
-          CapnpMessageFrameBuilder<>& frame_builder) override
-        {
-          auto segments = shared_message_builder.getSegmentsForOutput();
-          const auto segment_count = segments.size();
-          framed_buffers_.resize(segment_count + 1);
-          const auto it = framed_buffers_.begin();
-          frame_builder.Init(segment_count);
-          const auto& frame = frame_builder.GetFrame();
-          *it = boost::asio::const_buffer(frame.data(),
-                                          frame.size() * sizeof(frame.front()));
-          std::transform(
-            segments.begin(), segments.end(), std::next(it),
-            [&frame_builder](const kj::ArrayPtr<const capnp::word> a)
-            {
-              frame_builder.AddSegment(a.size());
-              return boost::asio::const_buffer(a.begin(),
-                                               a.size() * sizeof(a[0]));
-            });
-          frame_builder.Finalize(segment_count);
-          return framed_buffers_;
-        }
-
-        capnp::MallocMessageBuilder& GetMessageBuilder()
-        {
-          return shared_message_builder;
-        }
-
-        ~SharedSocketMessage() = default;
-      private:
-        capnp::MallocMessageBuilder shared_message_builder;
-        std::vector<boost::asio::const_buffer> framed_buffers_;
-      };
-
-      static std::shared_ptr<SharedSocketMessage> CreateSharedSocketMessage()
-      {
-        return std::make_shared<SharedSocketMessage>();
-      }
-
       void SendMessage(std::shared_ptr<CollabVmSocket>&& self,
                        std::shared_ptr<SocketMessage>&& socket_message)
       {
@@ -1192,24 +1118,67 @@ namespace CollabVm::Server
         TSocket::WriteMessage(
           segment_buffers,
           send_queue_.wrap([ this, self = std::move(self), socket_message ](
-            auto& send_queue, const boost::beast::error_code& ec,
+            auto& send_queue, const auto error_code,
             std::size_t bytes_transferred) mutable
             {
-              if (ec)
-              {
-                TSocket::Close();
-                return;
-              }
-              if (send_queue.empty())
-              {
-                sending_ = false;
-                return;
-              }
-              SendMessage(std::move(self), std::move(send_queue.front()));
-              send_queue.pop();
+              SendMessageCallback(
+                std::move(self), send_queue, error_code, bytes_transferred);
             }));
       }
 
+      void SendMessageBatch(std::shared_ptr<CollabVmSocket>&& self,
+                       std::queue<std::shared_ptr<SocketMessage>>& queue)
+      {
+        auto socket_messages = std::vector<std::shared_ptr<SocketMessage>>();
+        socket_messages.reserve(queue.size());
+        auto segment_buffers = std::vector<boost::asio::const_buffer>();
+        segment_buffers.reserve(queue.size());
+        do
+        {
+          auto& socket_message = *socket_messages.emplace_back(std::move(queue.front()));
+          const auto& buffers = socket_message.GetBuffers(frame_builder_);
+          std::copy(buffers.begin(), buffers.end(), std::back_inserter(segment_buffers));
+          queue.pop();
+        } while (!queue.empty());
+
+        TSocket::WriteMessage(
+          segment_buffers,
+          send_queue_.wrap(
+            [ this, self = std::move(self),
+            socket_messages = std::move(socket_messages) ](
+            auto& send_queue, const auto error_code,
+            std::size_t bytes_transferred) mutable
+            {
+              SendMessageCallback(
+                std::move(self), send_queue, error_code, bytes_transferred);
+            }));
+      }
+
+      void SendMessageCallback(
+        std::shared_ptr<CollabVmSocket>&& self,
+        std::queue<std::shared_ptr<SocketMessage>>& send_queue,
+        const boost::system::error_code error_code,
+        std::size_t bytes_transferred)
+      {
+        if (error_code)
+        {
+          TSocket::Close();
+          return;
+        }
+        switch (send_queue.size())
+        {
+        case 0:
+          sending_ = false;
+          return;
+        case 1:
+          SendMessage(std::move(self), std::move(send_queue.front()));
+          send_queue.pop();
+          return;
+        default:
+          SendMessageBatch(std::move(self), send_queue);
+        }
+      }
+    public:
       void QueueMessage(std::shared_ptr<SocketMessage>&& socket_message)
       {
         send_queue_.dispatch([
@@ -1229,7 +1198,7 @@ namespace CollabVm::Server
             }
           });
       }
-
+    private:
       void OnDisconnect() override { LeaveServerConfig(); }
 
       void LeaveServerConfig()
@@ -1264,7 +1233,7 @@ namespace CollabVm::Server
           std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now().time_since_epoch())
           .count();
-        auto socket_message = CreateSharedSocketMessage();
+        auto socket_message = SocketMessage::CreateShared();
         auto& message_builder = socket_message->GetMessageBuilder();
         auto channel_chat_message =
           message_builder.initRoot<CollabVmServerMessage>()
