@@ -45,12 +45,11 @@ endif()
 target_include_directories(argon2 PUBLIC ${ARGON2_INCLUDE_DIR})
 
 find_package(OpenSSL REQUIRED)
-message(STATUS "OPENSSL_INCLUDE_DIR: ${OPENSSL_INCLUDE_DIR}")
 
-find_package(SQLite3 REQUIRED CONFIG)
+find_package(SQLite3 REQUIRED)
 
 set(ODB_COMPONENTS libodb sqlite)
-find_package(odb REQUIRED CONFIG COMPONENTS ${ODB_COMPONENTS})
+find_package(odb REQUIRED COMPONENTS ${ODB_COMPONENTS})
 set(${PROJECT_NAME}_ODB_HEADERS "${CMAKE_SOURCE_DIR}/Database/User.h" "${CMAKE_SOURCE_DIR}/Database/VmConfig.h" "${CMAKE_SOURCE_DIR}/Database/ServerConfig.h")
 
 #set(BUILD_TESTING OFF)
@@ -66,7 +65,7 @@ add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
 add_compile_definitions(BOOST_ALL_NO_LIB)
-find_package(Boost 1.67 REQUIRED COMPONENTS system filesystem program_options date_time thread)
+find_package(Boost 1.69 REQUIRED COMPONENTS system filesystem program_options date_time thread)
 add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
@@ -84,7 +83,6 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(${PROJECT_NAME} Main.cpp Database/Database.cpp ${CAPNP_SRCS} ${CAPNP_HDRS} ${ODB_HEADERS})
 
 if(MSVC)
-	#set(CMAKE_LINK_FLAGS "${CMAKE_LINK_FLAGS} /MANIFEST:NO")
 	target_compile_options(${PROJECT_NAME} PRIVATE /permissive- /bigobj)
 	set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "/MANIFEST:NO")
 	# Enable Visual Studio's C++ Core Guidelines Checker
@@ -96,18 +94,7 @@ endif()
 
 find_package(PNG REQUIRED)
 
-find_library(CAIRO_LIBRARY cairo REQUIRED)
-function(copy_cairo_dlls TARGET)
-	if(MSVC AND CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
-		get_filename_component(CAIRO_LIBRARY_DIR ${CAIRO_LIBRARY} DIRECTORY)
-		set(CAIRO_BINARY_DIR "${CAIRO_LIBRARY_DIR}/../bin")
-		foreach(DEPENDENT_CAIRO_DLL IN ITEMS cairo expat libpng16 libbz2 libiconv libcharset freetype pixman-1 fontconfig zlib1)
-			add_custom_command(TARGET ${TARGET} PRE_LINK
-					COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CAIRO_BINARY_DIR}/${DEPENDENT_CAIRO_DLL}.dll" "$<TARGET_FILE_DIR:${TARGET}>"
-				)
-		endforeach()
-	endif()
-endfunction()
+find_package(unofficial-cairo REQUIRED)
 
 include(cmake/Findodb-compiler.cmake)
 set(ODB_COMPILE_OUTPUT_DIR "${CMAKE_BINARY_DIR}")
@@ -162,18 +149,10 @@ ExternalProject_Add(FreeRDP SOURCE_DIR "${CMAKE_SOURCE_DIR}/submodules/FreeRDP"
     -DBUILD_SHARED_LIBS:STRING=$<IF:$<CONFIG:RELEASE>,OFF,ON>
 	BUILD_BYPRODUCTS ${FREERDP_LIBRARIES}
 	)
-function(copy_freerdp_dlls TARGET)
-	if(MSVC AND CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
-		add_custom_command(TARGET ${TARGET} PRE_LINK
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/freerdp-client2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FREERDP_INSTALL_DIR}/lib/winpr2.dll" "$<TARGET_FILE_DIR:${TARGET}>"
-			)
-	endif()
-endfunction()
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${FREERDP_INSTALL_DIR}/lib/" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+  )
 add_dependencies(${PROJECT_NAME} FreeRDP)
-copy_freerdp_dlls(${PROJECT_NAME})
-copy_cairo_dlls(${PROJECT_NAME})
 
 set(FREERDP_INCLUDE_DIRS
 	${FREERDP_INSTALL_DIR}/include/freerdp2
@@ -182,13 +161,32 @@ set(FREERDP_INCLUDE_DIRS
 find_package(JPEG REQUIRED)
 
 set(GUACAMOLE_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/submodules/guacamole-server)
-file(GLOB GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/common/*.c ${GUACAMOLE_ROOT_DIR}/src/libguac/timestamp.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/guac_rdpsnd/*.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/_generated_keymaps.c ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/*.c ${GUACAMOLE_ROOT_DIR}/src/libguac/protocol.cpp ${GUACAMOLE_ROOT_DIR}/src/libguac/user-handlers.cpp)
+file(GLOB GUACAMOLE_SOURCES
+      ${GUACAMOLE_ROOT_DIR}/src/common/*.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/instruction*.cpp
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/log.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/image-stream.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/jpeg.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/png.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/layer.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/buffer.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/cursor.c
+      ${GUACAMOLE_ROOT_DIR}/src/guacenc/display*.c
+      ${GUACAMOLE_ROOT_DIR}/src/libguac/protocol.cpp
+      ${GUACAMOLE_ROOT_DIR}/src/libguac/timestamp.cpp
+      ${GUACAMOLE_ROOT_DIR}/src/libguac/user-handlers.cpp
+      ${GUACAMOLE_ROOT_DIR}/src/libguac/*.c
+      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/*.c
+      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/guac_rdpsnd/*.c
+      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/_generated_keymaps.c
+      ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/*.c)
+
 list(REMOVE_ITEM GUACAMOLE_SOURCES ${GUACAMOLE_ROOT_DIR}/src/libguac/id.c ${GUACAMOLE_ROOT_DIR}/src/libguac/encode-webp.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_fs.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/audio_input.c ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp_print_job.c ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/sftp.c)
-add_library(guacamole ${GUACAMOLE_SOURCES} ${GUAC_CAPNP_SRCS})
-target_link_libraries(guacamole CapnProto::capnp ${CAIRO_LIBRARY} collab-vm-common PNG::PNG ${JPEG_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto)
+add_library(guacamole ${GUACAMOLE_SOURCES})
+target_link_libraries(guacamole PRIVATE CapnProto::capnp unofficial::cairo::cairo unofficial::cairo::cairo-gobject collab-vm-common PNG::PNG ${JPEG_LIBRARIES} OpenSSL::SSL OpenSSL::Crypto ${FREERDP_LIBRARIES} ${LIBVNCSERVER_LIBRARIES})
 add_dependencies(guacamole FreeRDP)
 add_dependencies(guacamole libvncserver)
-set(GUACAMOLE_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/common" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac/guacamole" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src" ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp)
+set(GUACAMOLE_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/common" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac/guacamole" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src" ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp ${COLLAB_VM_COMMON_BINARY_DIR})
 target_compile_definitions(guacamole PRIVATE -DENABLE_WINPR)
 target_include_directories(guacamole PUBLIC ${GUACAMOLE_INCLUDE_DIRS} ${FREERDP_INCLUDE_DIRS} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
 if (MSVC)
@@ -200,19 +198,18 @@ if (MSVC)
 	if(PTHREADS_LIBRARIES-NOTFOUND)
 		message(FATAL_ERROR "Could not find pthreads library")
 	endif()
-	target_link_libraries(guacamole ${PTHREADS_LIBRARIES})
+	target_link_libraries(guacamole PRIVATE ${PTHREADS_LIBRARIES})
 	target_include_directories(guacamole PUBLIC PTHREADS_INCLUDE_DIR ${GUACAMOLE_ROOT_DIR}/src/win-compat)
 endif()
 add_dependencies(guacamole FreeRDP)
-#add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "oss" "")
 
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
 	${FREERDP_INCLUDE_DIRS}
 	${LIBVNCSERVER_INCLUDE_DIRS}
 	${COLLAB_VM_COMMON} ${OPENSSL_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/submodules/GSL/include ${Boost_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIR} ${ARGON2_INCLUDE_DIR})
-target_link_libraries(${PROJECT_NAME}
-	argon2 ${Boost_LIBRARIES} ${CAIRO_LIBRARY} CapnProto::capnp collab-vm-common
-	${FREERDP_LIBRARIES} guacamole ${LIBVNCSERVER_LIBRARIES} OpenSSL::Crypto OpenSSL::SSL
+target_link_libraries(${PROJECT_NAME} PRIVATE
+	argon2 ${Boost_LIBRARIES} unofficial::cairo::cairo unofficial::cairo::cairo-gobject CapnProto::capnp collab-vm-common
+	guacamole ${LIBVNCSERVER_LIBRARIES} OpenSSL::Crypto OpenSSL::SSL
 	odb::libodb odb::libodb-sqlite sqlite3)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)
