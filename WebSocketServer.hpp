@@ -15,7 +15,6 @@
 #include <vector>
 #include <list>
 #include "StrandGuard.hpp"
-#include "fields_alloc.hpp"
 // #include "file_body.hpp"
 
 namespace CollabVm::Server {
@@ -31,7 +30,6 @@ class WebServerSocket : public std::enable_shared_from_this<
       : socket_(io_context, io_context),
         request_deadline_(io_context,
                           std::chrono::steady_clock::time_point::max()),
-        alloc_(8192),
         doc_root_(doc_root) {}
 
   virtual ~WebServerSocket() = default;
@@ -84,19 +82,16 @@ class WebServerSocket : public std::enable_shared_from_this<
     // Request must be fully processed within 60 seconds.
     request_deadline_.expires_after(std::chrono::seconds(60));
 
-    parser_.emplace(std::piecewise_construct, std::make_tuple(),
-                    std::make_tuple(alloc_));
-
     socket_.dispatch([ this, self = std::move(self) ](auto& socket) {
       beast::http::async_read_header(
-          socket.socket, buffer_, *parser_,
+          socket.socket, buffer_, parser_,
           socket_.wrap([ this, self = std::move(self) ](
               auto& sockets, const boost::system::error_code ec,
               std::size_t bytes_transferred) mutable {
             if (ec) {
               return;
             }
-            auto& request = parser_->get();
+            auto& request = parser_.get();
             if (request.method() == beast::http::verb::get) {
               // Accept WebSocket connections
               if (request.target() == "/") {
@@ -126,6 +121,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                           }
                           OnConnect();
                           sockets.websocket.binary(true);
+                          // sockets.websocket.auto_fragment(true);
                           CreateMessageBuffer()->StartRead(std::move(self));
                         }));
                     return;
@@ -290,13 +286,13 @@ class WebServerSocket : public std::enable_shared_from_this<
   void read_body() {
     buffer_.consume(buffer_.size());
     beast::http::async_read(
-        socket_, buffer_, *parser_,
+        socket_, buffer_, parser_,
         [ this, self = this->shared_from_this() ](
             const boost::system::error_code ec, std::size_t bytes_transferred){
             //                if (ec)
             //                    accept();
             //                else
-            //                    process_request(parser_->get());
+            //                    process_request(parser_.get());
         });
   }
 
@@ -464,12 +460,9 @@ class WebServerSocket : public std::enable_shared_from_this<
       beast::http::response_serializer<beast::http::file_body>>
       serializer_;
 
-  using alloc_type = fields_alloc<char>;
-  alloc_type alloc_;
   using request_body_t =
       beast::http::basic_dynamic_body<beast::flat_static_buffer<1024 * 1024>>;
-  std::optional<beast::http::request_parser<request_body_t, alloc_type>>
-      parser_;
+  beast::http::request_parser<request_body_t> parser_;
 
   //  beast::websocket::stream<asio::ip::tcp::socket&> websocket_;
   //  typename StrandGuard<Strand,
@@ -574,8 +567,7 @@ class WebServer : public TThreadPool {
         interrupt_signal_(TThreadPool::io_context_, SIGINT, SIGTERM) {}
 
   void Start(const std::string& host,
-             const std::uint16_t port,
-             const bool auto_start) {
+             const std::uint16_t port) {
     auto ec = boost::system::error_code();
     CreateDocRoot(doc_root_, ec);
     if (ec) {
