@@ -6,19 +6,23 @@ extern "C" {
 
 #include <protocols/rdp/rdp.h>
 #include <protocols/rdp/client.h>
+#include <protocols/rdp/user.h>
 #include <protocols/vnc/vnc.h>
 #include <protocols/vnc/client.h>
+#include <protocols/vnc/user.h>
 }
 #ifdef WIN32
 # undef CONST
 # undef min
 # undef max
 #endif
+#include <guacenc/instructions.h>
 #include <libguac/user-handlers.h>
 
 #include <atomic>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
+#include <cairo.h>
 #include <capnp/message.h>
 #include <functional>
 #include <gsl/span>
@@ -89,7 +93,10 @@ public:
   template<typename TJoinInstructionsCallback>
   void AddUser(TJoinInstructionsCallback&& callback)
   {
-    assert(state_ == State::kRunning);
+    if (state_ != State::kRunning)
+    {
+      return;
+    }
     const auto user = guac_user_alloc();
     user->client = client_.get();
     user->socket = guac_socket_alloc();
@@ -127,6 +134,79 @@ public:
   {
     guac_call_instruction_handler(user_.get(), instr);
   }
+
+  /*
+   * Creates a scaled screenshot and uses the callback to return the PNG bytes.
+   * @returns true if successful
+   */
+  template<typename TWriteCallback>
+  bool CreateScreenshot(TWriteCallback&& callback)
+  {
+    if (state_ != State::kRunning)
+    {
+      return false;
+    }
+
+    const auto display = guacenc_display_alloc(nullptr, nullptr, 0, 0, 0);
+    AddUser([display](auto&& message_builder)
+    {
+      guacenc_handle_instruction(
+        display, message_builder.getRoot<Guacamole::GuacServerInstruction>());
+    });
+    // The default layer should now contain the flattened image
+    const auto default_layer = guacenc_display_get_layer(display, 0);
+    if (!default_layer->buffer)
+    {
+      return false;
+    }
+    const auto& surface = *default_layer->buffer;
+    if (!surface.cairo || !surface.surface)
+    {
+      return false;
+    }
+
+    int width;
+    int height;
+    float scale_xy;
+    if (surface.width > surface.height)
+    {
+      width = 400;
+      scale_xy = 400.0 / surface.width;
+      height = scale_xy * surface.height;
+    }
+    else
+    {
+      height = 400;
+      scale_xy = 400.0 / surface.height;
+      width = scale_xy * surface.width;
+    }
+
+    const auto target =
+      cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+
+    const auto cairo_context = cairo_create(target);
+    cairo_scale(cairo_context, scale_xy, scale_xy);
+
+    cairo_set_source_surface(cairo_context, surface.surface, 0, 0);
+    cairo_paint(cairo_context);
+
+    const auto result =
+      cairo_surface_write_to_png_stream(target,
+        [](void* closure,
+           const unsigned char* data,
+           unsigned int length)
+        {
+          const auto& callback = *reinterpret_cast<TWriteCallback*>(closure);
+          callback(gsl::span(reinterpret_cast<const std::byte*>(data), length));
+          return CAIRO_STATUS_SUCCESS;
+        }, &callback);
+
+    cairo_destroy(cairo_context);
+    cairo_surface_destroy(target);
+    guacenc_display_free(display);
+
+    return result == CAIRO_STATUS_SUCCESS;
+  }
 private:
   static ssize_t SocketWriteHandler(guac_socket* socket, void* data)
   {
@@ -140,7 +220,7 @@ private:
       guacamole_client.state_ = State::kStopping;
     }
     static_cast<TCallbacks&>(guacamole_client).OnInstruction(
-      std::move(message_builder));
+      message_builder);
     return ssize_t(0);
   }
 
@@ -185,6 +265,13 @@ private:
     client_.reset(guac_client_alloc());
     const auto broadcast_socket = guac_socket_alloc();
     broadcast_socket->data = this;
+    broadcast_socket->flush_handler = [](auto* socket)
+    {
+      auto& guacamole_client =
+        *static_cast<GuacamoleClient*>(socket->data);
+      static_cast<TCallbacks&>(guacamole_client).OnFlush();
+      return ssize_t(0);
+    };
     broadcast_socket->write_handler = [](auto* socket, auto* data)
     {
       auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
