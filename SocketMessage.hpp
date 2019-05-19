@@ -1,5 +1,8 @@
 #pragma once
 
+#include <memory>
+#include <capnp/serialize.h>
+
 namespace CollabVm::Server {
 
 struct CopiedSocketMessage;
@@ -11,8 +14,8 @@ protected:
   ~SocketMessage() = default;
 
 public:
-  virtual std::vector<boost::asio::const_buffer>& GetBuffers(
-    CapnpMessageFrameBuilder<>&) = 0;
+  virtual std::vector<boost::asio::const_buffer>& GetBuffers() = 0;
+  virtual void CreateFrame() = 0;
 
   static std::shared_ptr<SharedSocketMessage> CreateShared() {
     return std::make_shared<SharedSocketMessage>();
@@ -26,52 +29,63 @@ public:
 
 struct SharedSocketMessage final : SocketMessage
 {
-  std::vector<boost::asio::const_buffer>& GetBuffers(
-    CapnpMessageFrameBuilder<>& frame_builder) override
-  {
-    auto segments = shared_message_builder.getSegmentsForOutput();
-    const auto segment_count = segments.size();
-    framed_buffers_.resize(segment_count + 1);
-    const auto it = framed_buffers_.begin();
-    frame_builder.Init(segment_count);
-    const auto& frame = frame_builder.GetFrame();
-    *it = boost::asio::const_buffer(frame.data(),
-                                    frame.size() * sizeof(frame.front()));
-    std::transform(
-      segments.begin(), segments.end(), std::next(it),
-      [&frame_builder](const kj::ArrayPtr<const capnp::word> a)
-      {
-        frame_builder.AddSegment(a.size());
-        return boost::asio::const_buffer(a.begin(),
-                                         a.size() * sizeof(a[0]));
-      });
-    frame_builder.Finalize(segment_count);
+  std::vector<boost::asio::const_buffer>& GetBuffers() override {
+    assert(!framed_buffers_.empty());
     return framed_buffers_;
   }
-
-  capnp::MallocMessageBuilder& GetMessageBuilder()
-  {
-    return shared_message_builder;
+  // An alternate implementation of capnp::messageToFlatArray()
+  // that doesn't copy segment data
+  void CreateFrame() override {
+    if (!framed_buffers_.empty()) {
+      return;
+    }
+    auto segments = shared_message_builder.getSegmentsForOutput();
+    const auto segment_count = segments.size();
+    const auto frame_size = (segment_count + 2) & ~size_t(1);
+    frame_.reserve(frame_size);
+    frame_.push_back(segment_count - 1);
+    framed_buffers_.reserve(segment_count + 1);
+    framed_buffers_.push_back({
+        frame_.data(), frame_size * sizeof(decltype(frame_)::value_type)
+      });
+    for (auto segment : segments) {
+      frame_.push_back(segment.size());
+      const auto segment_bytes = segment.asBytes();
+      framed_buffers_.push_back(
+        { segment_bytes.begin(), segment_bytes.size() });
+    }
+    if (segment_count % 2 == 0) {
+      // Set padding byte
+      frame_.push_back(0);
+    }
   }
 
   ~SharedSocketMessage() = default;
+
+  capnp::MallocMessageBuilder& const GetMessageBuilder() {
+    assert(frame_.empty() && framed_buffers_.empty());
+    return shared_message_builder;
+  }
+
 private:
+  std::vector<std::uint32_t> frame_;
   capnp::MallocMessageBuilder shared_message_builder;
   std::vector<boost::asio::const_buffer> framed_buffers_;
 };
 
 struct CopiedSocketMessage final : SocketMessage {
-  virtual ~CopiedSocketMessage() = default;
-
   CopiedSocketMessage(capnp::MallocMessageBuilder& message_builder)
     : buffer_(capnp::messageToFlatArray(message_builder)),
     framed_buffers_(
       { boost::asio::const_buffer(buffer_.asBytes().begin(),
                                  buffer_.asBytes().size()) }) {}
 
-  std::vector<boost::asio::const_buffer>& GetBuffers(
-    CapnpMessageFrameBuilder<>&) override {
+  virtual ~CopiedSocketMessage() = default;
+
+  std::vector<boost::asio::const_buffer>& GetBuffers() override {
     return framed_buffers_;
+  }
+  void CreateFrame() override {
   }
 private:
   kj::Array<capnp::word> buffer_;

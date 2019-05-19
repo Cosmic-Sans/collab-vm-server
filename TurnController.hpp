@@ -1,15 +1,16 @@
+#pragma once
+
 #include <boost/asio.hpp>
 
 #include <optional>
 #include <deque>
-#include <chrono>
 
 namespace CollabVm::Server {
 template<typename TUserPtr>
 class TurnController {
   boost::asio::io_context& io_context_;
 	boost::asio::steady_timer turn_timer_;
-  decltype(turn_timer_)::duration turn_time_;
+  typename decltype(turn_timer_)::duration turn_time_;
 	std::deque<TUserPtr> turn_queue_;
 
   void StartNextTurn()
@@ -25,15 +26,11 @@ class TurnController {
     OnCurrentUserChanged(turn_queue_);
   }
 public:
-  template<typename TDuration>
-  TurnController(boost::asio::io_context& io_context, TDuration turn_time) :
+  explicit TurnController(boost::asio::io_context& io_context) :
     io_context_(io_context),
     turn_timer_(io_context)
   {
-    SetTurnTime(turn_time);
   }
-
-  virtual ~TurnController() = default;
 
   class UserTurnData
   {

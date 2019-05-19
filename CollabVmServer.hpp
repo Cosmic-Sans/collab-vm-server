@@ -3,6 +3,8 @@
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/functional/hash.hpp>
+#include <boost/process.hpp>
 #include <boost/range/adaptors.hpp>
 #include <gsl/span>
 #include <memory>
@@ -18,7 +20,6 @@
 #include <kj/io.h>
 
 #include "capnp-list.hpp"
-#include "CapnpMessageFrameBuilder.hpp"
 #include "CaseInsensitiveUtils.hpp"
 #include "CollabVm.capnp.h"
 #include "CollabVmCommon.hpp"
@@ -30,6 +31,7 @@
 #include "Recaptcha.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
+#include "TurnController.hpp"
 
 namespace CollabVm::Server
 {
@@ -47,7 +49,10 @@ namespace CollabVm::Server
     constexpr static auto global_channel_id = 0;
 
     template <typename TSocket>
-    class CollabVmSocket final : public TSocket
+    class CollabVmSocket final
+      : public TSocket,
+        public TurnController<
+          std::shared_ptr<CollabVmSocket<TSocket>>>::UserTurnData
     {
       using SessionMap = std::unordered_map<
         Database::SessionId,
@@ -55,20 +60,26 @@ namespace CollabVm::Server
         Database::SessionIdHasher>;
 
     public:
+      struct UserData
+      {
+        std::string username;
+        bool is_admin_;
+        typename TSocket::IpAddress::IpBytes ip_address;
+      };
+
       CollabVmSocket(boost::asio::io_context& io_context,
                      const boost::filesystem::path& doc_root,
                      CollabVmServer& server)
         : TSocket(io_context, doc_root),
           server_(server),
-          io_context_(io_context),
           send_queue_(io_context),
           sending_(false),
-          chat_rooms_(io_context_),
-          chat_rooms_id_(1),
+          chat_rooms_(io_context),
           is_logged_in_(false),
           // is_admin_(false),
             is_admin_(true), // TESTING ONLY
-          is_viewing_server_config(false)
+          is_viewing_server_config(false),
+          username_(io_context)
       {
       }
 
@@ -167,59 +178,113 @@ namespace CollabVm::Server
 
         switch (message.which())
         {
+        case CollabVmClientMessage::Message::GUAC_INSTR:
+        {
+          const auto channel_id = 1;
+          server_.virtual_machines_.dispatch([
+            this, self = shared_from_this(),
+            channel_id, message, buffer = std::move(buffer)]
+            (auto& virtual_machines) mutable
+            {
+              const auto virtual_machine = virtual_machines.
+                GetAdminVirtualMachine(channel_id);
+              if (!virtual_machine)
+              {
+                return;
+              }
+              virtual_machine->ReadInstruction([self = std::move(self),
+                buffer = std::move(buffer), message](){
+                return message.getGuacInstr();
+              });
+            });
+          break;
+        }
+        case CollabVmClientMessage::Message::TURN_REQUEST:
+        {
+          server_.virtual_machines_.dispatch([
+            self = shared_from_this(),
+            channel_id = message.getTurnRequest()]
+            (auto& virtual_machines) mutable
+            {
+              const auto virtual_machine = virtual_machines.
+                GetAdminVirtualMachine(channel_id);
+              if (!virtual_machine)
+              {
+                return;
+              }
+              virtual_machine->RequestTurn(std::move(self));
+            });
+        }
         case CollabVmClientMessage::Message::CONNECT_TO_CHANNEL:
         {
           const auto channel_id = message.getConnectToChannel();
-          auto connect_to_channel = [this, self = shared_from_this(), channel_id](){
-            auto socket_message = SocketMessage::CreateShared();
-            auto& message_builder = socket_message->GetMessageBuilder();
-            auto connect_result =
-              message_builder.initRoot<CollabVmServerMessage>()
-              .initMessage()
-              .initConnectResponse()
-              .initResult();
-            auto connect_to_channel = [this, self = shared_from_this(),
-              socket_message, connect_result](auto& channel) mutable
-            {
-              channel.AddClient(shared_from_this());
-              auto connect_success = connect_result.initSuccess();
-              connect_success.setChatMessages(
-                channel.GetChatRoom().GetChatHistory());
-              QueueMessage(std::move(socket_message));
+          username_.dispatch([
+            this, self = shared_from_this(), channel_id]
+            (auto& username) {
+            auto connect_to_channel = [this, self = shared_from_this(), channel_id](auto& username) {
+              auto socket_message = SocketMessage::CreateShared();
+              auto& message_builder = socket_message->GetMessageBuilder();
+              auto connect_result =
+                message_builder.initRoot<CollabVmServerMessage>()
+                .initMessage()
+                .initConnectResponse()
+                .initResult();
+              auto connect_to_channel =
+                [this, self = shared_from_this(),
+                 username, socket_message=std::move(socket_message),
+                 connect_result](auto& channel) mutable
+              {
+                channel.GetChatRoom().GetChatHistory(
+                  connect_result.initSuccess());
+                QueueMessage(std::move(socket_message));
+                UserData user_data{ username, is_admin_, TSocket::GetIpAddress().AsBytes() };
+                channel.AddUser(user_data, std::move(self));
+              };
+              if (channel_id == global_channel_id)
+              {
+                if (is_in_global_chat_)
+                {
+                  return;
+                }
+                is_in_global_chat_ = true;
+                server_.global_chat_room_.dispatch(std::move(connect_to_channel));
+              }
+              else
+              {
+                if (connected_vm_id_)
+                {
+                  return;
+                }
+                connected_vm_id_ = channel_id;
+                server_.virtual_machines_.dispatch([
+                  this, self = shared_from_this(),
+                    channel_id, socket_message,
+                    connect_result, connect_to_channel = std::move(
+                      connect_to_channel)
+                ](auto& virtual_machines) mutable
+                  {
+                    const auto virtual_machine = virtual_machines.
+                      GetAdminVirtualMachine(channel_id);
+                    if (!virtual_machine)
+                    {
+                      connect_result.setFail();
+                      QueueMessage(std::move(socket_message));
+                      return;
+                    }
+                    virtual_machine->GetUserChannel(
+                      std::move(connect_to_channel));
+                  });
+              }
             };
-            if (channel_id == global_channel_id)
+            if (username.empty())
             {
-              server_.global_chat_room_.dispatch(std::move(connect_to_channel));
+              GenerateUsername(std::move(connect_to_channel));
             }
             else
             {
-              server_.virtual_machines_.dispatch([
-                this, self = shared_from_this(),
-                  channel_id, socket_message,
-                  connect_result, connect_to_channel = std::move(
-                    connect_to_channel)
-              ](auto& virtual_machines) mutable
-                {
-                  const auto virtual_machine = virtual_machines.
-                    GetAdminVirtualMachine(channel_id);
-                  if (!virtual_machine)
-                  {
-                    connect_result.setFail();
-                    QueueMessage(std::move(socket_message));
-                    return;
-                  }
-                  connect_to_channel(*virtual_machine);
-                });
+              connect_to_channel(username);
             }
-          };
-          if (username_.empty())
-          {
-            GenerateUsername(std::move(connect_to_channel));
-          }
-          else
-          {
-            connect_to_channel();
-          }
+          });
           break;
         }
         case CollabVmClientMessage::Message::CHANGE_USERNAME:
@@ -255,28 +320,26 @@ namespace CollabVm::Server
                   QueueMessage(std::move(socket_message));
                   return;
                 }
-                auto username_change = message.initChangeUsername();
-                username_change.setOldUsername(username_);
-                username_change.setNewUsername(new_username);
-                username_ = new_username;
-                guests[username_] = self;
-                QueueMessage(std::move(socket_message));
+                SetUsername(std::string(new_username));
               });
             break;
           }
         case CollabVmClientMessage::Message::CHANGE_PASSWORD_REQUEST:
-            if (!is_logged_in_)
-            {
-              break;
-            }
-            {
-              const auto change_password_request =
-                message.getChangePasswordRequest();
+          if (!is_logged_in_)
+          {
+            break;
+          }
+          username_.dispatch(
+            [this, self = shared_from_this(),
+            buffer = std::move(buffer), message]
+            (auto& username) {
               auto lambda = [this, self = shared_from_this(),
-                buffer = std::move(buffer), change_password_request]()
+                buffer = std::move(buffer), message, username]()
               {
+                const auto change_password_request =
+                  message.getChangePasswordRequest();
                 const auto success = server_.db_.ChangePassword(
-                  username_,
+                  username,
                   change_password_request.getOldPassword(),
                   change_password_request.getNewPassword());
                 auto socket_message = SocketMessage::CreateShared();
@@ -288,19 +351,24 @@ namespace CollabVm::Server
               server_.login_strand_.post(
                 std::move(lambda),
                 std::allocator<decltype(lambda)>());
-            }
-            break;
+            });
+          break;
         case CollabVmClientMessage::Message::CHAT_MESSAGE:
+        {
+          const auto chat_message = message.getChatMessage();
+          const auto message_len = chat_message.getMessage().size();
+          if (!message_len || message_len > max_chat_message_len)
           {
-            if (username_.empty())
+            break;
+          }
+          username_.dispatch(
+            [this, self = shared_from_this(),
+            buffer = std::move(buffer), chat_message]
+          (auto& username)
+          {
+            if (username.empty())
             {
-              break;
-            }
-            const auto chat_message = message.getChatMessage();
-            const auto message_len = chat_message.getMessage().size();
-            if (!message_len || message_len > max_chat_message_len)
-            {
-              break;
+              return;
             }
             const auto destination =
               chat_message.getDestination().getDestination();
@@ -309,8 +377,7 @@ namespace CollabVm::Server
             case CollabVmClientMessage::ChatMessageDestination::Destination::
             NEW_DIRECT:
               server_.guests_.dispatch([
-                  this, self = shared_from_this(), buffer = std::move(
-                    buffer),
+                  this, self = shared_from_this(), buffer = std::move(buffer),
                   chat_message, username = destination.getNewDirect()
                 ](auto& guests) mutable
                 {
@@ -452,8 +519,8 @@ namespace CollabVm::Server
             DIRECT:
               {
                 chat_rooms_.dispatch([
-                    this, self = shared_from_this(), buffer = std::move(buffer),
-                    chat_message, destination
+                    this, self = shared_from_this(), username,
+                    buffer = std::move(buffer), chat_message, destination
                   ](const auto& chat_rooms) mutable
                   {
                     const auto id = destination.getDirect();
@@ -465,7 +532,7 @@ namespace CollabVm::Server
                     }
                     const auto recipient = chat_rooms_it->second.first;
                     recipient->QueueMessage(CreateChatMessage(
-                      id, username_, chat_message.getMessage()));
+                      id, username, chat_message.getMessage()));
                   });
                 break;
               }
@@ -473,7 +540,7 @@ namespace CollabVm::Server
               {
                 const auto id = destination.getVm();
                 auto send_message = [
-                    this, self = shared_from_this(),
+                    this, self = shared_from_this(), username,
                     buffer = std::move(buffer), chat_message
                   ](auto& channel)
                 {
@@ -484,16 +551,9 @@ namespace CollabVm::Server
                                     .initRoot<CollabVmServerMessage>()
                                     .initMessage()
                                     .initChatMessage();
-                  chat_room.AddUserMessage(chat_room_message, username_,
+                  chat_room.AddUserMessage(chat_room_message, username,
                                            chat_message.getMessage());
-                  channel.GetClients(
-                    [self = std::move(self), new_chat_message](auto& clients)
-                    {
-                      for (auto&& client_ptr : clients)
-                      {
-                        client_ptr->QueueMessage(new_chat_message);
-                      }
-                    });
+                  channel.BroadcastMessage(std::move(new_chat_message));
                 };
                 if (id == global_channel_id)
                 {
@@ -510,15 +570,17 @@ namespace CollabVm::Server
                   {
                     return;
                   }
-                  send_message(*virtual_machine);
+                  virtual_machine->GetUserChannel(
+                    std::move(send_message));
                 });
               break;
             }
             default:
               break;
             }
-            break;
-          }
+          });
+        }
+        break;
         case CollabVmClientMessage::Message::VM_LIST_REQUEST:
           {
             server_.virtual_machines_.dispatch(
@@ -791,7 +853,7 @@ namespace CollabVm::Server
               const auto initial_settings = message.getCreateVm();
               auto& virtual_machine =
                 virtual_machines.AddAdminVirtualMachine(
-                  io_context_, vm_id, initial_settings);
+                  server_.GetContext(), vm_id, initial_settings);
               virtual_machine.GetSettings(
                 [this, self = std::move(self), vm_id](auto& settings)
                 {
@@ -803,7 +865,7 @@ namespace CollabVm::Server
                 .initRoot<CollabVmServerMessage>().initMessage()
                 .setCreateVmResponse(vm_id);
               QueueMessage(socket_message);
-              SendAdminVmList(virtual_machines);
+              virtual_machines.SendAdminVmList(*this);
             });
           break;
         case CollabVmClientMessage::Message::READ_VMS:
@@ -812,7 +874,7 @@ namespace CollabVm::Server
             server_.virtual_machines_.dispatch([ this,
                 self = shared_from_this() ](auto& virtual_machines)
               {
-                SendAdminVmList(virtual_machines);
+                virtual_machines.SendAdminVmList(*this);
               });
           }
           break;
@@ -896,7 +958,7 @@ namespace CollabVm::Server
                 return;
               }
               server_.db_.RemoveVm(vm_id);
-              SendAdminVmList(virtual_machines);
+              virtual_machines.SendAdminVmList(*this);
             });
           break;
         case CollabVmClientMessage::Message::START_VMS:
@@ -940,6 +1002,28 @@ namespace CollabVm::Server
                 return;
               }
               virtual_machine->Stop();
+            }
+          });
+          break;
+        case CollabVmClientMessage::Message::RESTART_VMS:
+          if (!is_admin_)
+          {
+            break;
+          }
+          server_.virtual_machines_.dispatch(
+            [this, self = shared_from_this(), buffer = std::move(buffer),
+              message](auto& virtual_machines)
+          {
+            for (auto vm_id : message.getRestartVms())
+            {
+              const auto virtual_machine =
+                virtual_machines.GetAdminVirtualMachine(vm_id);
+              if (!virtual_machine)
+              {
+                // TODO: Indicate error
+                return;
+              }
+              virtual_machine->Restart();
             }
           });
           break;
@@ -1085,16 +1169,6 @@ namespace CollabVm::Server
         QueueMessage(std::move(socket_message));
       }
 
-      // TODO: Remove template
-      template<typename TVmList>
-      void SendAdminVmList(TVmList& virtual_machines)
-      {
-        auto& message_builder = virtual_machines.GetAdminVirtualMachineInfo();
-        auto socket_message =
-          SocketMessage::CopyFromMessageBuilder(message_builder);
-        QueueMessage(std::move(socket_message));
-      }
-
       bool ValidateVmSetting(std::uint16_t setting_id,
                              const VmSetting::Setting::Reader& setting)
       {
@@ -1128,7 +1202,7 @@ namespace CollabVm::Server
                        std::shared_ptr<SocketMessage>&& socket_message)
       {
         const auto& segment_buffers = socket_message->
-          GetBuffers(frame_builder_);
+          GetBuffers();
         TSocket::WriteMessage(
           segment_buffers,
           send_queue_.wrap([ this, self = std::move(self), socket_message ](
@@ -1150,13 +1224,13 @@ namespace CollabVm::Server
         do
         {
           auto& socket_message = *socket_messages.emplace_back(std::move(queue.front()));
-          const auto& buffers = socket_message.GetBuffers(frame_builder_);
+          const auto& buffers = socket_message.GetBuffers();
           std::copy(buffers.begin(), buffers.end(), std::back_inserter(segment_buffers));
           queue.pop();
         } while (!queue.empty());
 
         TSocket::WriteMessage(
-          segment_buffers,
+          std::move(segment_buffers),
           send_queue_.wrap(
             [ this, self = std::move(self),
             socket_messages = std::move(socket_messages) ](
@@ -1193,17 +1267,20 @@ namespace CollabVm::Server
         }
       }
     public:
-      void QueueMessage(std::shared_ptr<SocketMessage>&& socket_message)
+      template<typename TMessage>
+      void QueueMessage(TMessage&& socket_message)
       {
+        static_assert(std::is_convertible_v<TMessage, std::shared_ptr<SocketMessage>>);
+        socket_message->CreateFrame();
         send_queue_.dispatch([
             this, self = shared_from_this(),
             socket_message =
-            std::forward<std::shared_ptr<SocketMessage>>(socket_message)
+              std::forward<TMessage>(socket_message)
           ](auto& send_queue) mutable
           {
             if (sending_)
             {
-              send_queue.push(socket_message);
+              send_queue.push(std::move(socket_message));
             }
             else
             {
@@ -1222,9 +1299,10 @@ namespace CollabVm::Server
           {
             callback([&send_queue](auto&& socket_message)
             {
-              send_queue.push(socket_message);
+              socket_message->CreateFrame();
+              send_queue.push(std::forward<decltype(socket_message)>(socket_message));
             });
-            if (!sending_)
+            if (!send_queue.empty() && !sending_)
             {
               sending_ = true;
               SendMessageBatch(std::move(self), send_queue);
@@ -1232,7 +1310,31 @@ namespace CollabVm::Server
           });
       }
     private:
-      void OnDisconnect() override { LeaveServerConfig(); }
+      void OnDisconnect() override {
+        LeaveServerConfig();
+        auto leave_channel =
+          [self = shared_from_this()]
+          (auto& channel) {
+            channel.RemoveUser(std::move(self));
+          };
+        if (connected_vm_id_) {
+          server_.virtual_machines_.dispatch([
+            id = connected_vm_id_, leave_channel]
+            (auto& virtual_machines)
+            {
+              const auto virtual_machine = virtual_machines.
+                GetAdminVirtualMachine(id);
+              if (!virtual_machine)
+              {
+                return;
+              }
+              virtual_machine->GetUserChannel(std::move(leave_channel));
+            });
+        }
+        if (is_in_global_chat_) {
+          server_.global_chat_room_.dispatch(std::move(leave_channel));
+        }
+      }
 
       void LeaveServerConfig()
       {
@@ -1294,39 +1396,79 @@ namespace CollabVm::Server
       void GenerateUsername(TContinuation&& continuation)
       {
         server_.guests_.dispatch([
-            this, continuation = std::move(continuation)
+            this, continuation = std::forward<TContinuation>(continuation)
         ](auto& guests)
         {
           auto num = server_.guest_rng_(server_.rng_);
-          auto username = "guest" + std::to_string(num);
+          auto username = std::string();
           // Increment the number until a username is found that is not taken
-          auto this_ptr = shared_from_this();
-          while (!std::get<bool>(guests.insert({ username, this_ptr })))
+          auto is_username_taken = false;
+          do
           {
-            username = "guest" + std::to_string(++num);
-          }
-          username_ = std::move(username);
-          continuation();
+            if (is_username_taken) {
+              num++;
+            }
+            username = "guest" + std::to_string(num);
+            is_username_taken =
+              !std::get<bool>(guests.insert({ username, shared_from_this() }));
+          } while (is_username_taken);
+          SetUsername(username);
+          continuation(username);
         });
       }
 
-      CollabVmServer& server_;
-      boost::asio::io_context& io_context_;
-      CapnpMessageFrameBuilder<> frame_builder_;
+      template<typename TString>
+      void SetUsername(TString&& username) {
+        static_assert(std::is_convertible_v<TString, std::string>);
+        username_.dispatch(
+          [this, self = shared_from_this(), username = std::forward<TString>(username)]
+          (auto& current_username) mutable {
+            std::swap(current_username, username);
+            if (!username.empty() && (connected_vm_id_ || is_in_global_chat_))
+            {
+              auto update_username = 
+                [this, self = shared_from_this(), new_username=current_username]
+                (auto& channel) mutable {
+                  channel.UpdateUsername(std::move(self), std::move(new_username));
+                };
+              if (connected_vm_id_) {
+                server_.virtual_machines_.dispatch([
+                  id = connected_vm_id_, update_username]
+                  (auto& virtual_machines)
+                  {
+                    const auto virtual_machine = virtual_machines.
+                      GetAdminVirtualMachine(id);
+                    if (!virtual_machine)
+                    {
+                      return;
+                    }
+                    virtual_machine->GetUserChannel(std::move(update_username));
+                  });
+              }
+              if (is_in_global_chat_) {
+                server_.global_chat_room_.dispatch(std::move(update_username));
+              }
+            }
+          });
+      }
+
+      CollabVmServer& const server_;
       StrandGuard<std::queue<std::shared_ptr<SocketMessage>>> send_queue_;
       bool sending_;
       StrandGuard<std::unordered_map<
         std::uint32_t,
         std::pair<std::shared_ptr<CollabVmSocket>, std::uint32_t>>>
-      chat_rooms_;
-      std::uint32_t chat_rooms_id_;
+        chat_rooms_;
+      std::uint32_t chat_rooms_id_ = 1;
 
       std::vector<std::uint8_t> totp_key_;
       bool is_logged_in_ = false;
       bool is_admin_ = false;
       bool is_viewing_server_config = false;
       bool is_viewing_vm_list_ = false;
-      std::string username_;
+      bool is_in_global_chat_ = false;
+      std::uint32_t connected_vm_id_ = 0;
+      StrandGuard<std::string> username_;
       friend class CollabVmServer;
     };
 
@@ -1343,9 +1485,9 @@ namespace CollabVm::Server
         login_strand_(TServer::io_context_),
         global_chat_room_(
           TServer::io_context_,
-          TServer::io_context_,
           global_channel_id),
-        guest_rng_(1'000, 99'999)
+        guest_rng_(1'000, 99'999),
+        vm_info_timer_(TServer::io_context_)
     {
       settings_.dispatch([this](auto& settings)
       {
@@ -1354,6 +1496,22 @@ namespace CollabVm::Server
                 .getRecaptchaKey();
         recaptcha_.SetRecaptchaKey(recaptcha_key);
       });
+      StartVmInfoUpdate();
+    }
+
+    void StartVmInfoUpdate() {
+      vm_info_timer_.expires_after(vm_info_update_frequency_);
+      vm_info_timer_.async_wait(
+        [&](const auto error_code) {
+          if (error_code) {
+            return;
+          }
+          virtual_machines_.dispatch([](auto& virtual_machines)
+          {
+            virtual_machines.UpdateVirtualMachineInfoList();
+          });
+          StartVmInfoUpdate();
+        });
     }
 
     void Start(const std::string& host,
@@ -1373,12 +1531,22 @@ namespace CollabVm::Server
               }
             });
           });
-
-          //testing
-          virtual_machines.UpdateVirtualMachineInfoList();
         });
       }
       TServer::Start(host, port);
+    }
+
+    void Stop() override {
+      vm_info_timer_.cancel();
+      virtual_machines_.dispatch(
+        [](auto& virtual_machines)
+        {
+          virtual_machines.ForEachAdminVm(
+            [](auto& vm) {
+              vm.Stop();
+            });
+        });
+      TServer::Stop();
     }
 
   protected:
@@ -1409,7 +1577,7 @@ namespace CollabVm::Server
             // TODO: Handle error
             return;
           }
-          socket->username_ = std::move(correct_username);
+          socket->SetUsername(correct_username);
           socket->is_logged_in_ = true;
           socket->is_admin_ = is_admin;
           // TODO: Can SetSessionId return a reference?
@@ -1423,21 +1591,8 @@ namespace CollabVm::Server
               it->second->InvalidateSession();
             }
           }
-          callback(socket->username_, new_session_id);
+          callback(correct_username, new_session_id);
         });
-    }
-
-    void SendVmList(CollabVmSocket<typename TServer::TSocket>& socket)
-    {
-      auto message_builder = new capnp::MallocMessageBuilder();
-      auto vm_info_list =
-        message_builder->initRoot<CollabVmServerMessage::Message>()
-                       .initVmListResponse(1);
-      vm_info_list[0].setName("asdf");
-      vm_info_list[0].setOperatingSystem("Windows XP");
-      vm_info_list[0].setHost("collabvm.com");
-      //    auto vm_list = CreateCopiedSocketMessage()
-      //    socket.QueueMessage(std::move(socket_message));
     }
 
     using Socket = CollabVmSocket<typename TServer::TSocket>;
@@ -1491,12 +1646,12 @@ namespace CollabVm::Server
       capnp::List<ServerSetting>::Builder settings_list_;
     };
 
-    template <typename TClient>
+    template<typename TClient,
+             typename TUserData,
+             typename TBase = std::nullptr_t>
     struct UserChannel
     {
-      explicit UserChannel(boost::asio::io_context& io_context,
-                           const std::uint32_t id) :
-        clients_(io_context),
+      explicit UserChannel(const std::uint32_t id) :
         chat_room_(id)
       {
       }
@@ -1511,18 +1666,133 @@ namespace CollabVm::Server
         return chat_room_;
       }
 
-      template<typename TCallback>
-      void GetClients(TCallback&& callback)
+      auto& GetUsers()
       {
-        clients_.dispatch(std::move(callback));
+        return users_;
       }
 
-      void AddClient(const std::shared_ptr<TClient> client)
+      template<typename TCallback>
+      void ForEachUser(TCallback&& callback) {
+        std::for_each(
+          users_.begin(),
+          users_.end(),
+          [callback=std::forward<TCallback>(callback)]
+          (auto& user) {
+            callback(user.second, *user.first);
+          });
+      }
+
+      void AddUser(const TUserData& user_data, std::shared_ptr<TClient> user)
       {
-        clients_.dispatch([client = std::move(client)](auto& clients)
-        {
-          clients.emplace_back(client);
-        });
+        OnAddUser(user);
+        users_.emplace(user, user_data);
+        admins_count_ += !!user_data.is_admin_;
+        user->QueueMessage(
+          user_data.is_admin_
+          ? CreateAdminUserListMessage()
+          : CreateUserListMessage());
+
+        if (users_.size() <= 1) {
+          return;
+        }
+
+        auto user_message = SocketMessage::CreateShared();
+        auto add_user = user_message->GetMessageBuilder()
+          .initRoot<CollabVmServerMessage>()
+          .initMessage()
+          .initUserListAdd();
+        add_user.setChannel(GetId());
+        AddUserToList(user_data, add_user);
+
+        auto admin_user_message = SocketMessage::CreateShared();
+        auto add_admin_user = admin_user_message->GetMessageBuilder()
+          .initRoot<CollabVmServerMessage>()
+          .initMessage()
+          .initAdminUserListAdd();
+        add_admin_user.setChannel(GetId());
+        AddUserToList(user_data, add_admin_user.initUser());
+
+        ForEachUser([user_message=std::move(user_message),
+                     admin_user_message=std::move(admin_user_message)]
+          (const auto& user_data, auto& user)
+          {
+            user.QueueMessage(
+              user_data.is_admin_ ? admin_user_message : user_message);
+          });
+      }
+
+      void OnAddUser(std::shared_ptr<TClient> user) {
+        if constexpr (!std::is_same_v<TBase, std::nullptr_t>) {
+          static_cast<TBase&>(*this).OnAddUser(user);
+        }
+      }
+
+      template<typename TString>
+      void UpdateUsername(std::shared_ptr<TClient> user_ptr, TString&& username) {
+        static_assert(std::is_convertible_v<TString, std::string>);
+        auto user = users_.find(user_ptr);
+        if (user == users_.end()) {
+          return;
+        }
+        auto message = SocketMessage::CreateShared();
+        auto username_change = message->GetMessageBuilder()
+          .initRoot<CollabVmServerMessage>()
+          .initMessage()
+          .initChangeUsername();
+        username_change.setOldUsername(user->second.username);
+        username_change.setNewUsername(username);
+
+        user->second.username = std::forward<TString>(username);
+
+        BroadcastMessage(std::move(message));
+      }
+
+      void BroadcastMessage(std::shared_ptr<SocketMessage>&& message) {
+        ForEachUser(
+          [message =
+            std::forward<std::shared_ptr<SocketMessage>>(message)]
+          (const auto&, auto& user)
+          {
+            user.QueueMessage(message);
+          });
+      }
+      
+      auto CreateUserListMessage() {
+        return CreateUserListMessages(
+          &CollabVmServerMessage::Message::Builder::initUserList);
+      }
+
+      auto CreateAdminUserListMessage() {
+        return CreateUserListMessages(
+          &CollabVmServerMessage::Message::Builder::initAdminUserList);
+      }
+
+      void RemoveUser(std::shared_ptr<TClient> user) {
+        auto user_it = users_.find(user);
+        if (user_it == users_.end()) {
+          return;
+        }
+        const auto& user_data = user_it->second;
+        admins_count_ -= !!user_data.is_admin_;
+
+        auto message = SocketMessage::CreateShared();
+        auto user_list_remove = message->GetMessageBuilder()
+          .initRoot<CollabVmServerMessage>()
+          .initMessage()
+          .initUserListRemove();
+        user_list_remove.setChannel(GetId());
+        user_list_remove.setUsername(user_data.username);
+
+        OnRemoveUser(user);
+        users_.erase(user_it);
+
+        BroadcastMessage(std::move(message));
+      }
+
+      void OnRemoveUser(std::shared_ptr<TClient> user) {
+        if constexpr (!std::is_same_v<TBase, std::nullptr_t>) {
+          static_cast<TBase&>(*this).OnRemoveUser(user);
+        }
       }
 
       std::uint32_t GetId() const
@@ -1531,9 +1801,49 @@ namespace CollabVm::Server
       }
 
     private:
-      StrandGuard<std::vector<std::shared_ptr<TClient>>> clients_;
+      template<typename TInitFunction>
+      auto CreateUserListMessages(TInitFunction init)
+      {
+        auto message = SocketMessage::CreateShared();
+        auto user_list = (message->GetMessageBuilder()
+          .initRoot<CollabVmServerMessage>()
+          .initMessage()
+          .*init)();
+        user_list.setChannel(GetId());
+        auto users_it = user_list.initUsers(users_.size()).begin();
+        ForEachUser([this, &users_it](auto& user_data, auto&)
+          {
+            AddUserToList(user_data, *users_it++);
+          });
+        return message;
+      }
+
+      template<typename TListElement>
+      void AddUserToList(const TUserData& user, TListElement list_info)
+      {
+        auto& username = user.username;
+        list_info.setUsername(
+          kj::StringPtr(username.data(), username.length()));
+
+        if constexpr (
+          std::is_same_v<TListElement, CollabVmServerMessage::UserAdmin::Builder>)
+        {
+          auto ip_address = list_info.initIpAddress();
+          const auto& ip_address_bytes = user.ip_address;
+          ip_address.setFirst(
+            boost::endian::native_to_big(
+              *reinterpret_cast<const std::uint64_t*>(&ip_address_bytes[0])));
+          ip_address.setSecond(
+            boost::endian::native_to_big(
+              *reinterpret_cast<const std::uint64_t*>(&ip_address_bytes[8])));
+        }
+      }
+
+      std::unordered_map<std::shared_ptr<TClient>, TUserData> users_;
+      std::uint32_t admins_count_ = 0;
       CollabVmChatRoom<Socket, CollabVm::Shared::max_username_len,
                        max_chat_message_len> chat_room_;
+      capnp::MallocMessageBuilder message_builder_;
     };
 
     template <typename TClient>
@@ -1549,27 +1859,27 @@ namespace CollabVm::Server
       }
 
       CollabVmServerMessage::VmInfo::Builder vm_info_;
-
-      // std::shared_ptr<AdminVirtualMachine<TClient>> admin_vm_info;
     };
 
     template <typename TClient>
     struct VirtualMachinesList;
 
     template <typename TClient>
-    struct AdminVirtualMachine final : UserChannel<TClient>
+    struct AdminVirtualMachine
     {
       AdminVirtualMachine(boost::asio::io_context& io_context,
                           const std::uint32_t id,
                           CollabVmServer& server,
                           capnp::List<VmSetting>::Reader initial_settings,
                           CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-                         : UserChannel<TClient>(io_context, id),
-                           state_(io_context,
-                             InitVmSettingsData(
-                               GetInitialSettings(initial_settings),
-                               admin_vm_info)),
-                           guacamole_client_(io_context, *this),
+                         : id_(id),
+                           state_(
+                             io_context,
+                             *this,
+                             id,
+                             io_context,
+                             initial_settings,
+                             admin_vm_info),
                            server_(server)
       {
       }
@@ -1580,24 +1890,140 @@ namespace CollabVm::Server
                           CollabVmServer& server,
                           TSettingProducer&& get_setting,
                           CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-                         : UserChannel<TClient>(io_context, id),
-                           state_(io_context,
-                             InitVmSettingsData(
-                               GetInitialSettings(get_setting),
-                               admin_vm_info)),
-                           guacamole_client_(io_context, *this),
+                         : id_(id),
+                           state_(
+                             io_context,
+                             *this,
+                             id,
+                             io_context,
+                             std::forward<TSettingProducer>(get_setting),
+                             admin_vm_info),
+
                            server_(server)
       {
       }
 
-      struct VmSettingsData
+      void RequestTurn(std::shared_ptr<TClient> user)
       {
-        VmSettingsData(
-          std::unique_ptr<capnp::MallocMessageBuilder>&& message_builder,
-          capnp::List<VmSetting>::Builder settings)
-          : message_builder_(std::move(message_builder)),
-            settings_(settings)
+        state_.dispatch([user=std::move(user)](auto& state)
+          {
+            state.RequestTurn(std::move(user));
+          });
+      }
+
+      struct VmState final
+        : TurnController<std::shared_ptr<TClient>>,
+          UserChannel<TClient, typename TClient::UserData, VmState>
+      {
+        using TurnController = TurnController<std::shared_ptr<TClient>>;
+        using UserChannel = UserChannel<TClient, typename TClient::UserData, VmState>;
+
+        template<typename TSettingProducer>
+        VmState(
+          AdminVirtualMachine& admin_vm,
+          const std::uint32_t id,
+          boost::asio::io_context& io_context,
+          TSettingProducer&& get_setting,
+          CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
+          : TurnController(io_context),
+            UserChannel(id),
+            message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
+            settings_(GetInitialSettings(std::forward<TSettingProducer>(get_setting))),
+            guacamole_client_(io_context, admin_vm)
         {
+          SetAdminVmInfo(admin_vm_info);
+
+          TurnController::SetTurnTime(
+            std::chrono::seconds(
+              GetSetting(VmSetting::Setting::TURN_TIME).getTurnTime()));
+        }
+
+        VmState(
+          AdminVirtualMachine& admin_vm,
+          const std::uint32_t id,
+          boost::asio::io_context& io_context,
+          capnp::List<VmSetting>::Reader initial_settings,
+          CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
+          : TurnController(io_context),
+            UserChannel(id),
+            message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
+            settings_(GetInitialSettings(initial_settings)),
+            guacamole_client_(io_context, admin_vm)
+        {
+          SetAdminVmInfo(admin_vm_info);
+        }
+
+        capnp::List<VmSetting>::Builder GetInitialSettings(
+            capnp::List<VmSetting>::Reader initial_settings) {
+          auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
+          if (initial_settings.size() == fields.size())
+          {
+            auto message =
+              message_builder_->initRoot<CollabVmServerMessage>().initMessage();
+            message.setReadVmConfigResponse(initial_settings);
+            return message.getReadVmConfigResponse();
+          }
+          auto settings = message_builder_->initRoot<CollabVmServerMessage>()
+                                               .initMessage()
+                                               .initReadVmConfigResponse(fields.size());
+          auto current_setting = initial_settings.begin();
+          const auto end = initial_settings.end();
+          for (auto i = 0u; i < fields.size(); i++) {
+            while (current_setting != end && current_setting->getSetting().which() < i)
+            {
+              current_setting++;
+            }
+            auto new_setting = capnp::DynamicStruct::Builder(settings[i].getSetting());
+            if (current_setting != end && current_setting->getSetting().which() == i)
+            {
+              const capnp::DynamicStruct::Reader reader = current_setting->getSetting();
+              KJ_IF_MAYBE(field, reader.which()) {
+                new_setting.set(*field, reader.get(*field));
+                continue;
+              }
+            }
+            new_setting.clear(fields[i]);
+          }
+          return settings;
+        }
+
+        template<typename TSettingProducer>
+        capnp::List<VmSetting>::Builder GetInitialSettings(
+            TSettingProducer&& get_setting) {
+          const auto fields =
+            capnp::Schema::from<VmSetting::Setting>().getUnionFields();
+          auto settings = message_builder_->initRoot<CollabVmServerMessage>()
+                                         .initMessage()
+                                         .initReadVmConfigResponse(fields.size());
+          for (auto i = 0u; i < fields.size(); i++) {
+            auto dynamic_setting =
+              capnp::DynamicStruct::Builder(settings[i].getSetting());
+            dynamic_setting.clear(fields[i]);
+          }
+          auto setting = get_setting();
+          while (setting)
+          {
+            const auto which = setting->which();
+            const auto field = fields[which];
+            const auto value = capnp::DynamicStruct::Reader(*setting).get(field);
+            auto dynamic_setting =
+              capnp::DynamicStruct::Builder(settings[which].getSetting());
+            dynamic_setting.set(field, value);
+            setting = get_setting();
+          }
+          return settings;
+        }
+
+        void SetAdminVmInfo(
+          CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
+        {
+          admin_vm_info.setId(UserChannel::GetId());
+          admin_vm_info.setName(GetSetting(VmSetting::Setting::NAME).getName());
+          admin_vm_info.setStatus(connected_
+            ? CollabVmServerMessage::VmStatus::RUNNING
+            : active_
+              ? CollabVmServerMessage::VmStatus::STARTING
+              : CollabVmServerMessage::VmStatus::STOPPED);
         }
 
         VmSetting::Setting::Reader GetSetting(
@@ -1606,91 +2032,140 @@ namespace CollabVm::Server
           return settings_[setting].getSetting();
         }
 
+        std::shared_ptr<SocketMessage> GetVmDescriptionMessage() {
+          auto socket_message = SocketMessage::CreateShared();
+          socket_message->GetMessageBuilder()
+            .initRoot<CollabVmServerMessage>()
+            .initMessage()
+            .setVmDescription(
+              GetSetting(VmSetting::Setting::DESCRIPTION).
+              getDescription());
+          return socket_message;
+        }
+
+        void OnAddUser(std::shared_ptr<TClient> user) {
+          user->QueueMessageBatch(
+            [&guacamole_client=guacamole_client_, description_message=
+              GetVmDescriptionMessage()](auto queue_message) mutable
+            {
+              queue_message(std::move(description_message));
+              guacamole_client.AddUser(
+                [queue_message=std::move(queue_message)]
+                (capnp::MallocMessageBuilder&& message_builder)
+                {
+                  // TODO: Avoid copying
+                  auto guac_instr =
+                    message_builder.getRoot<Guacamole::GuacServerInstruction>();
+                  auto socket_message = SocketMessage::CreateShared();
+                  socket_message->GetMessageBuilder()
+                                .initRoot<CollabVmServerMessage>()
+                                .initMessage()
+                                .setGuacInstr(guac_instr);
+                  socket_message->CreateFrame();
+                  queue_message(std::move(socket_message));
+                });
+          });
+        }
+
+        void OnRemoveUser(std::shared_ptr<TClient> user) {
+        }
+
+        void OnCurrentUserChanged(std::deque<std::shared_ptr<TClient>>& users_queue) override {
+          BroadcastTurnQueue(users_queue);
+        }
+
+        void OnUserAdded(std::deque<std::shared_ptr<TClient>>& users_queue) override {
+          BroadcastTurnQueue(users_queue);
+        }
+
+        void OnUserRemoved(std::deque<std::shared_ptr<TClient>>& users_queue) override {
+          BroadcastTurnQueue(users_queue);
+        }
+
+        void BroadcastTurnQueue(std::deque<std::shared_ptr<TClient>>& users_queue) {
+          auto message = SocketMessage::CreateShared();
+          auto vmTurnInfo =
+            message->GetMessageBuilder().initRoot<CollabVmServerMessage>()
+            .initMessage().initVmTurnInfo();
+          vmTurnInfo.setTimeRemaining(0);
+          auto users_list = vmTurnInfo.initUsers(users_queue.size());
+          auto& channel_users = UserChannel::GetUsers();
+          std::transform(users_queue.begin(), users_queue.end(), users_list.begin(),
+            [&channel_users](auto& user_ptr)
+            {
+              if (auto user = channel_users.find(user_ptr);
+                  user != channel_users.end()) {
+                auto& username = user->second.username;
+                return capnp::Text::Builder(username.data(), username.length());
+              }
+              return capnp::Text::Builder();
+            });
+
+          UserChannel::BroadcastMessage(std::move(message));
+        }
+
+        void ApplySettings(const capnp::List<VmSetting>::Reader settings,
+                           const std::optional<capnp::List<VmSetting>::Reader>
+                           previous_settings = {})
+        {
+          TurnController::SetTurnTime(
+            std::chrono::seconds(
+              settings[VmSetting::Setting::TURN_TIME]
+              .getSetting().getTurnTime()));
+          if (!settings[VmSetting::Setting::Which::TURNS_ENABLED]
+               .getSetting().getTurnsEnabled()
+            && previous_settings.has_value()
+            && previous_settings.value()[VmSetting::Setting::Which::
+                 TURNS_ENABLED]
+               .getSetting().getTurnsEnabled())
+          {
+            TurnController::Clear();
+          }
+          const auto description =
+            settings[VmSetting::Setting::Which::DESCRIPTION]
+            .getSetting().getDescription();
+          if (!previous_settings.has_value()
+              || previous_settings.value()
+                 [VmSetting::Setting::Which::DESCRIPTION]
+                 .getSetting().getDescription() != description)
+          {
+            UserChannel::BroadcastMessage(GetVmDescriptionMessage());
+          }
+        }
+
         bool active_ = false;
         bool connected_ = false;
         std::size_t viewer_count_ = 0;
         std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
         capnp::List<VmSetting>::Builder settings_;
+        CollabVmGuacamoleClient<AdminVirtualMachine> guacamole_client_;
       };
 
-      VmSettingsData InitVmSettingsData(
-        VmSettingsData vm_settings_data,
-        CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-      {
-        SetAdminVmInfo(vm_settings_data, admin_vm_info);
-        return vm_settings_data;
-      }
-
-      template<typename TSettingProducer>
-      static VmSettingsData GetInitialSettings(TSettingProducer&& get_setting)
-      {
-        auto message_builder = std::make_unique<capnp::MallocMessageBuilder>();
-        const auto fields =
-          capnp::Schema::from<VmSetting::Setting>().getUnionFields();
-        auto settings = message_builder->initRoot<CollabVmServerMessage>()
-                                       .initMessage()
-                                       .initReadVmConfigResponse(fields.size());
-        for (auto i = 0u; i < fields.size(); i++) {
-          auto dynamic_setting =
-            capnp::DynamicStruct::Builder(settings[i].getSetting());
-          dynamic_setting.clear(fields[i]);
-        }
-        auto setting = std::invoke_result_t<TSettingProducer>();
-        while (setting = get_setting())
-        {
-          const auto which = setting->which();
-          const auto field = fields[which];
-          const auto value = capnp::DynamicStruct::Reader(*setting).get(field);
-          auto dynamic_setting =
-            capnp::DynamicStruct::Builder(settings[which].getSetting());
-          dynamic_setting.set(field, value);
-        }
-        return VmSettingsData(std::move(message_builder), settings);
-      }
-
-      static VmSettingsData GetInitialSettings(
-        capnp::List<VmSetting>::Reader initial_settings)
-      {
-        auto message_builder = std::make_unique<capnp::MallocMessageBuilder>();
-        auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
-        if (initial_settings.size() == fields.size())
-        {
-          auto message =
-            message_builder->initRoot<CollabVmServerMessage>().initMessage();
-          message.setReadVmConfigResponse(initial_settings);
-          return VmSettingsData(
-            std::move(message_builder), message.getReadVmConfigResponse());
-        }
-        auto settings = message_builder->initRoot<CollabVmServerMessage>()
-                                             .initMessage()
-                                             .initReadVmConfigResponse(fields.size());
-        auto current_setting = initial_settings.begin();
-        const auto end = initial_settings.end();
-        for (auto i = 0u; i < fields.size(); i++) {
-          while (current_setting != end && current_setting->getSetting().which() < i)
-          {
-            current_setting++;
-          }
-          auto new_setting = capnp::DynamicStruct::Builder(settings[i].getSetting());
-          if (current_setting != end && current_setting->getSetting().which() == i)
-          {
-            const capnp::DynamicStruct::Reader reader = current_setting->getSetting();
-            KJ_IF_MAYBE(field, reader.which()) {
-              new_setting.set(*field, reader.get(*field));
-              continue;
-            }
-          }
-          new_setting.clear(fields[i]);
-        }
-        return VmSettingsData(std::move(message_builder), settings);
+      template<typename TCallback>
+      void GetUserChannel(TCallback&& callback) {
+        state_.dispatch([callback = std::forward<TCallback>(callback)]
+        (auto& state) mutable {
+          callback(static_cast<UserChannel<TClient, typename TClient::UserData, VmState>&>(state));
+        });
       }
 
       void Start()
       {
-        state_.dispatch([this](auto& settings)
+        state_.dispatch([this](auto& state)
         {
-          settings.active_ = true;
-          const auto params = settings.GetSetting(VmSetting::Setting::GUACAMOLE_PARAMETERS)
+          if (state.active_) {
+              return;
+          }
+
+          if (const auto start_command =
+                state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
+              start_command.size()) {
+            boost::process::spawn(start_command.cStr());
+          }
+
+          state.active_ = true;
+          UpdateVmInfo();
+          const auto params = state.GetSetting(VmSetting::Setting::GUACAMOLE_PARAMETERS)
                         .getGuacamoleParameters();
           auto params_map = std::unordered_map<std::string_view, std::string_view>(params.size());
           std::transform(params.begin(), params.end(),
@@ -1700,24 +2175,53 @@ namespace CollabVm::Server
               return std::pair(param.getName().cStr(), param.getValue().cStr());
             });
           const auto protocol =
-            settings.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
+            state.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
           if (protocol == VmSetting::Protocol::RDP)
           {
-            guacamole_client_.StartRDP(params_map);
+            state.guacamole_client_.StartRDP(params_map);
           }
           else if (protocol == VmSetting::Protocol::VNC)
           {
-            guacamole_client_.StartVNC(params_map);
+            state.guacamole_client_.StartVNC(params_map);
           }
         });
       }
 
       void Stop()
       {
-        state_.dispatch([this](auto& settings)
+        state_.dispatch([this](auto& state)
         {
-          settings.active_ = false;
-          guacamole_client_.Stop();
+          if (!state.active_) {
+              return;
+          }
+
+          if (const auto stop_command =
+                state.GetSetting(VmSetting::Setting::STOP_COMMAND).getStopCommand();
+              stop_command.size()) {
+            boost::process::spawn(stop_command.cStr());
+          }
+
+          state.active_ = false;
+          state.guacamole_client_.Stop();
+        });
+      }
+
+      void Restart()
+      {
+        state_.dispatch([this](auto& state)
+        {
+          if (!state.active_) {
+              return;
+          }
+
+          if (const auto restart_command =
+                state.GetSetting(VmSetting::Setting::RESTART_COMMAND).getRestartCommand();
+              restart_command.size()) {
+            boost::process::spawn(restart_command.cStr());
+          }
+
+          state.active_ = true;
+          state.guacamole_client_.Stop();
         });
       }
 
@@ -1756,22 +2260,22 @@ namespace CollabVm::Server
       }
 
       template<typename TSetVmInfo>
-      void SetVmInfo(
-        CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info,
-        CollabVmServerMessage::VmInfo::Builder vm_info,
-        TSetVmInfo&& set_vm_info)
+      void SetVmInfo(TSetVmInfo&& set_vm_info)
       {
-        state_.dispatch([this, admin_vm_info, vm_info,
+        state_.dispatch([this,
           set_vm_info = std::forward<TSetVmInfo>(set_vm_info)](auto& state) mutable
         {
-          SetAdminVmInfo(state, admin_vm_info);
+          auto admin_vm_info = set_vm_info.InitAdminVmInfo();
+          state.SetAdminVmInfo(admin_vm_info);
           if (!state.active_)
           {
-            set_vm_info(false, std::optional<std::vector<std::byte>>());
             return;
           }
 
-          vm_info.setId(UserChannel<TClient>::GetId());
+          state.viewer_count_ = state.GetUsers().size();
+
+          auto vm_info = set_vm_info.InitVmInfo();
+          vm_info.setId(state.GetId());
           vm_info.setName(state.GetSetting(VmSetting::Setting::NAME).getName());
           // vm_info.setHost();
           // vm_info.setAddress();
@@ -1784,24 +2288,16 @@ namespace CollabVm::Server
           vm_info.setViewerCount(state.viewer_count_);
 
           auto png = std::vector<std::byte>();
+          png.reserve(100 * 1'024);
           const auto created_screenshot =
-            guacamole_client_.CreateScreenshot([&png](auto png_bytes)
+            state.guacamole_client_.CreateScreenshot([&png](auto png_bytes)
             {
               png.insert(png.end(), png_bytes.begin(), png_bytes.end());
             });
-          set_vm_info(true,
-            created_screenshot ? std::optional(std::move(png)) : std::nullopt);
+          if (created_screenshot) {
+            set_vm_info.SetThumbnail(std::move(png));
+          }
         });
-        UserChannel<TClient>::GetClients(
-          [this](auto& clients)
-          {
-            state_.dispatch(
-              [this, clients_count = clients.size()](
-                auto& data)
-              {
-                data.viewer_count_ = clients_count;
-              });
-          });
       }
 
       template<typename TGetModifiedSettings, typename TContinuation>
@@ -1812,9 +2308,9 @@ namespace CollabVm::Server
         state_.dispatch([this, &db,
           get_modified_settings =
             std::forward<TGetModifiedSettings>(get_modified_settings),
-          continuation = std::forward<TContinuation>(continuation)](auto& data) mutable
+          continuation = std::forward<TContinuation>(continuation)](auto& state) mutable
         {
-          auto current_settings = data.settings_;
+          auto current_settings = state.settings_;
           auto message_builder = std::make_unique<capnp::MallocMessageBuilder>();
           const auto new_settings = message_builder->initRoot<CollabVmServerMessage>()
                                                .initMessage()
@@ -1829,105 +2325,89 @@ namespace CollabVm::Server
           const auto valid = ValidateSettings(new_settings);
           if (valid)
           {
-            db.UpdateVmSettings(UserChannel<TClient>::GetId(), modified_settings);
-            ApplySettings(new_settings, current_settings);
-            data.settings_ = current_settings = new_settings;
-            data.message_builder_ = std::move(message_builder);
+            db.UpdateVmSettings(state.GetId(), modified_settings);
+            state.settings_ = new_settings;
+            state.ApplySettings(new_settings, current_settings);
+            state.message_builder_ = std::move(message_builder);
           }
 
           continuation(valid);
         });
       }
 
+      template<typename TCallback>
+      void ReadInstruction(TCallback&& callback)
+      {
+        state_.dispatch([this, callback=std::forward<TCallback>(callback)](auto& state)
+          {
+            if (!state.connected_) {
+              return;
+            }
+            state.guacamole_client_.ReadInstruction(callback());
+          });
+      }
+
+      std::uint32_t GetId() const {
+        return id_;
+      }
+
     private:
       friend struct CollabVmGuacamoleClient<AdminVirtualMachine>;
 
-      template<typename TCallback>
-      void GetAdminVmInfo(TCallback&& callback)
+      void UpdateVmInfo()
       {
         server_.virtual_machines_.dispatch(
-          [this, callback = std::move(callback)](auto& virtual_machines)
+          [this](auto& virtual_machines)
           {
-            const auto id = UserChannel<TClient>::GetId();
-            auto& admin_virtual_machine_info = virtual_machines
-              .GetAdminVirtualMachineInfo();
-            auto admin_vm_info_list = admin_virtual_machine_info
-              .getRoot<CollabVmServerMessage>()
-              .getMessage()
-              .getReadVmsResponse();
-            for (auto vm_info : admin_vm_info_list)
-            {
-              if (vm_info.getId() != id) {
-                continue;
-              }
-              const auto update = callback(vm_info);
-              if (update)
-              {
-                auto admin_vm_list_message =
-                  SocketMessage::CopyFromMessageBuilder(
-                    admin_virtual_machine_info);
-                virtual_machines.BroadcastToViewingAdmins(
-                  admin_vm_list_message);
-              }
-              return;
-            }
-        });
+            virtual_machines.UpdateVirtualMachineInfo(*this);
+          });
       }
 
       void OnStart()
       {
-        state_.dispatch([this](auto& settings)
+        state_.dispatch([this](auto& state)
         {
-          if (!settings.active_)
+          if (!state.active_)
           {
-            guacamole_client_.Stop();
+            state.guacamole_client_.Stop();
             return;
           }
-          settings.connected_ = true;
-          GetAdminVmInfo([this](auto vm_info)
-          {
-            vm_info.setStatus(CollabVmServerMessage::VmStatus::RUNNING);
-            return true;
-          });
-          UserChannel<TClient>::GetClients([this](auto& clients)
-          {
-            guacamole_client_.AddUser(
-              [&clients](capnp::MallocMessageBuilder&& message_builder)
+          state.connected_ = true;
+          UpdateVmInfo();
+
+          auto& users = state.GetUsers();
+          state.guacamole_client_.AddUser(
+            [&users](capnp::MallocMessageBuilder&& message_builder)
+            {
+              auto socket_message =
+                SocketMessage::CopyFromMessageBuilder(message_builder);
+              for (auto& user : users)
               {
-                auto socket_message =
-                  SocketMessage::CopyFromMessageBuilder(message_builder);
-                for (auto& client : clients)
-                {
-                  client->QueueMessage(socket_message);
-                }
-              });
-          });
+                user.first->QueueMessage(socket_message);
+              }
+            });
         });
       }
 
       void OnStop()
       {
-        state_.dispatch([this](auto& settings)
+        state_.dispatch([this](auto& state)
           {
-            settings.connected_ = false;
-            if (!settings.active_)
+            state.connected_ = false;
+            UpdateVmInfo();
+            if (!state.active_)
             {
               return;
             }
-            GetAdminVmInfo([this](auto vm_info)
-            {
-              vm_info.setStatus(CollabVmServerMessage::VmStatus::STARTING);
-              return true;
-            });
             const auto protocol =
-              settings.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
+              state.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
             if (protocol == VmSetting::Protocol::RDP)
             {
-              guacamole_client_.StartRDP();
+              state.guacamole_client_.StartRDP();
             }
             else if (protocol == VmSetting::Protocol::VNC)
             {
-              guacamole_client_.StartVNC();
+              state.guacamole_client_.StartVNC();
             }
           });
       }
@@ -1950,27 +2430,8 @@ namespace CollabVm::Server
             .getSetting().getVoteTime() > 0);
       }
 
-      void ApplySettings(capnp::List<VmSetting>::Reader settings,
-                         std::optional<capnp::List<VmSetting>::Reader>
-                         previous_settings = {})
-      {
-        if (settings[VmSetting::Setting::Which::TURNS_ENABLED]
-            .getSetting().getTurnsEnabled() && true)
-        {
-        }
-      }
-
-      void SetAdminVmInfo(
-        VmSettingsData& settings,
-        CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-      {
-        admin_vm_info.setId(UserChannel<TClient>::GetId());
-        admin_vm_info.setName(settings.GetSetting(VmSetting::Setting::NAME).getName());
-        admin_vm_info.setStatus(CollabVmServerMessage::VmStatus::STOPPED);
-      }
-
-      StrandGuard<VmSettingsData> state_;
-      CollabVmGuacamoleClient<AdminVirtualMachine> guacamole_client_;
+      const std::uint32_t id_;
+      StrandGuard<VmState> state_;
       CollabVmServer& server_;
     };
 
@@ -1982,14 +2443,13 @@ namespace CollabVm::Server
                           CollabVmServer& server)
         : server_(server)
       {
-        auto admin_vm_list_message_builder = std::make_unique<capnp::MallocMessageBuilder>();
-        std::unordered_map<std::uint32_t, std::shared_ptr<VirtualMachine<TClient
-                           >>> virtual_machines;
+        auto admin_vm_list_message_builder = SocketMessage::CreateShared();
         auto admin_virtual_machines =
           std::unordered_map<std::uint32_t, std::shared_ptr<AdminVm>>();
         db.ReadVirtualMachines(
-          [this, &io_context, &virtual_machines, &admin_virtual_machines,
-            &admin_vm_list_message_builder=*admin_vm_list_message_builder](
+          [this, &io_context, &admin_virtual_machines,
+            &admin_vm_list_message_builder =
+              admin_vm_list_message_builder->GetMessageBuilder()](
           const auto total_virtual_machines,
           auto& vm_settings)
           {
@@ -2021,20 +2481,17 @@ namespace CollabVm::Server
                       reinterpret_cast<const capnp::word*>(setting_data.data()));
                   return std::optional(db_setting);
                 },
+                // TODO: constructors shouldn't have out parameters
                 *admin_vm_info_it++);
               admin_virtual_machines.emplace(vm_id, std::move(admin_vm));
             }
           });
-			  admin_vm_info_list_ = ResizableList<InitAdminVmInfo>(std::move(admin_vm_list_message_builder));
-			  virtual_machines_ = std::move(virtual_machines);
+			  admin_vm_info_list_ =
+          ResizableList<InitAdminVmInfo>(
+            std::move(admin_vm_list_message_builder));
 			  admin_virtual_machines_ = std::move(admin_virtual_machines);
       }
 
-      capnp::MallocMessageBuilder& GetMessageBuilder()
-      {
-        return vm_info_list_.GetMessageBuilder();
-      }
-     
       AdminVirtualMachine<TClient>* GetAdminVirtualMachine(
         const std::uint32_t id)
       {
@@ -2063,9 +2520,9 @@ namespace CollabVm::Server
         return &admin_vm;
       }
 
-      capnp::MallocMessageBuilder& GetAdminVirtualMachineInfo() const
+      void SendAdminVmList(TClient& client) const
       {
-        return admin_vm_info_list_.GetMessageBuilder();
+        client.QueueMessage(admin_vm_info_list_.GetMessage());
       }
 
       const auto& GetVirtualMachinesMap() const
@@ -2090,20 +2547,26 @@ namespace CollabVm::Server
       }
       */
 
-      void AddVmListViewer(std::shared_ptr<TClient>&& viewer_ptr)
+      void AddVmListViewer(std::shared_ptr<TClient>&& viewer)
       {
-        auto& viewer = *viewer_ptr;
+        viewer->QueueMessageBatch(
+          [vm_list_message=vm_info_list_.GetMessage(),
+           &thumbnails=thumbnails_](auto queue_message)
+          {
+            queue_message(std::move(vm_list_message));
+
+            for (auto& [vm_id, thumbnail] : thumbnails) {
+              queue_message(thumbnail);
+            }
+          });
         vm_list_viewers_.emplace_back(
-          std::forward<std::shared_ptr<TClient>>(viewer_ptr));
-        auto vm_list_message = SocketMessage::CopyFromMessageBuilder(
-          vm_info_list_.GetMessageBuilder());
-        viewer.QueueMessage(std::move(vm_list_message));
+          std::forward<std::shared_ptr<TClient>>(viewer));
       }
 
       auto& AddAdminVirtualMachine(boost::asio::io_context& io_context,
-                                  const std::uint32_t id,
-                                  capnp::List<VmSetting>::Reader
-                                  initial_settings)
+                                   const std::uint32_t id,
+                                   capnp::List<VmSetting>::Reader
+                                   initial_settings)
       {
         auto admin_vm_info = admin_vm_info_list_.Add();
         auto vm = std::make_shared<AdminVm>(
@@ -2119,9 +2582,7 @@ namespace CollabVm::Server
         auto& viewer = *viewer_ptr;
         admin_vm_list_viewers_.emplace_back(
           std::forward<std::shared_ptr<TClient>>(viewer_ptr));
-        auto admin_vm_list_message = SocketMessage::CopyFromMessageBuilder(
-          admin_vm_info_list_.GetMessageBuilder());
-        viewer.QueueMessage(std::move(admin_vm_list_message));
+        viewer.QueueMessage(admin_vm_info_list_.GetMessage());
       }
 
       void BroadcastToViewingAdminsExcluding(
@@ -2145,8 +2606,8 @@ namespace CollabVm::Server
           });
       }
 
-      void BroadcastToViewingAdmins(
-        const std::shared_ptr<CopiedSocketMessage>& message) {
+      template<typename TMessage>
+      void BroadcastToViewingAdmins(const TMessage& message) {
         std::for_each(
           admin_vm_list_viewers_.begin(), admin_vm_list_viewers_.end(),
           [&message](auto& viewer)
@@ -2168,7 +2629,37 @@ namespace CollabVm::Server
       }
 
       std::size_t pending_vm_info_requests_ = 0;
-      std::size_t pending_vm_info_updates_ = 0;
+      std::size_t pending_vm_info_updates_  = 0;
+
+      template<typename TFinalizer>
+      struct VmInfoProducer {
+        VmInfoProducer(TFinalizer&& finalizer)
+          : finalizer(std::forward<TFinalizer>(finalizer)) {
+        }
+        VmInfoProducer(VmInfoProducer&& vm_info_producer) = default;
+        TFinalizer finalizer;
+        std::vector<std::byte> png_bytes;
+        std::unique_ptr<capnp::MallocMessageBuilder> message_builder = std::make_unique<capnp::MallocMessageBuilder>();
+        capnp::Orphan<CollabVmServerMessage::AdminVmInfo> admin_vm_info;
+        capnp::Orphan<CollabVmServerMessage::VmInfo> vm_info;
+        CollabVmServerMessage::AdminVmInfo::Builder InitAdminVmInfo() {
+          admin_vm_info = message_builder->getOrphanage().newOrphan<CollabVmServerMessage::AdminVmInfo>();
+          return admin_vm_info.get();
+        }
+        CollabVmServerMessage::VmInfo::Builder InitVmInfo() {
+          vm_info = message_builder->getOrphanage().newOrphan<CollabVmServerMessage::VmInfo>();
+          return vm_info.get();
+        }
+        void SetThumbnail(std::vector<std::byte>&& png_bytes) {
+          VmInfoProducer::png_bytes =
+            std::forward<std::vector<std::byte>>(png_bytes);
+        }
+        ~VmInfoProducer() {
+          if (message_builder) {
+            finalizer(*this);
+          }
+        }
+      };
 
       void UpdateVirtualMachineInfoList()
       {
@@ -2179,36 +2670,45 @@ namespace CollabVm::Server
         }
         pending_vm_info_requests_ = admin_virtual_machines_.size();
         pending_vm_info_updates_ = 0;
-        for (auto& [id, vm] : admin_virtual_machines_)
+        for (auto& [vm_id, vm] : admin_virtual_machines_)
         {
-          auto message_builder =
-            std::make_unique<capnp::MallocMessageBuilder>();
-          auto admin_vm_info = message_builder->getOrphanage()
-            .newOrphan<CollabVmServerMessage::AdminVmInfo>();
-          auto vm_info = message_builder->getOrphanage()
-            .newOrphan<CollabVmServerMessage::VmInfo>();
-          vm->vm.SetVmInfo(admin_vm_info.get(), vm_info.get(),
-            server_.virtual_machines_.wrap(
-              [this, vm, message_builder = std::move(message_builder),
-                admin_vm_info = std::move(admin_vm_info),
-                vm_info = std::move(vm_info)]
-              (auto&, auto set_vm_info, auto thumbnail) mutable
+          vm->vm.SetVmInfo(
+            VmInfoProducer(server_.virtual_machines_.wrap(
+              [this, vm, vm_id](auto&, auto& vm_info_producer) mutable
               {
-                if (thumbnail.has_value())
-                {
-                  return;
+                if (auto& thumbnail_bytes = vm_info_producer.png_bytes;
+                  thumbnail_bytes.empty()) {
+                } else {
+                  thumbnails_.erase(ThumbnailKey("", vm_id));
+                  auto& thumbnail_message =
+                    thumbnails_[ThumbnailKey("", vm_id)] =
+                    SocketMessage::CreateShared();
+                  auto thumbnail =
+                    thumbnail_message->GetMessageBuilder()
+                    .initRoot<CollabVmServerMessage>()
+                    .initMessage().initVmThumbnail();
+                  thumbnail.setId(vm_id);
+                  thumbnail.setPngBytes(kj::ArrayPtr(
+                    reinterpret_cast<kj::byte*>(thumbnail_bytes.data()),
+                    thumbnail_bytes.size()));
                 }
-                vm->pending_vm_info_message_builder = std::move(message_builder);
-                vm->pending_admin_vm_info = std::move(admin_vm_info);
-                if (set_vm_info)
+                if (vm_info_producer.vm_info != nullptr)
                 {
-                  vm->pending_vm_info = std::move(vm_info);
                   pending_vm_info_updates_++;
                 }
+                vm->SetPendingVmInfo(
+                  std::move(vm_info_producer.message_builder),
+                  std::move(vm_info_producer.admin_vm_info),
+                  std::move(vm_info_producer.vm_info));
                 if (--pending_vm_info_requests_)
                 {
                   return;
                 }
+                /*
+                // TODO: Sort on server-side
+                auto orphanage = admin_vm_info_list_.GetMessageBuilder().getOrphanage();
+                orphanage.newOrphan<CollabVmServerMessage::VmInfo>();
+                */
                 admin_vm_info_list_.Reset(admin_virtual_machines_.size());
                 auto admin_vm_info_list =
                   typename decltype(admin_vm_info_list_)::List::GetList(
@@ -2218,161 +2718,170 @@ namespace CollabVm::Server
                   typename decltype(vm_info_list_)::List::GetList(
                     vm_info_list_.GetMessageBuilder());
                 auto admin_vm_info_list_index = 0u;
-                auto vm_info_list_index       = 0u;
+                auto vm_info_list_index = 0u;
                 for (auto& [id, admin_vm] : admin_virtual_machines_)
                 {
-                  if (!admin_vm->pending_vm_info_message_builder)
+                  if (!admin_vm->HasPendingAdminVmInfo())
                   {
                     continue;
                   }
                   admin_vm_info_list.setWithCaveats(
                     admin_vm_info_list_index++,
-                    admin_vm->pending_admin_vm_info.get());
-                  if (admin_vm->pending_vm_info != nullptr)
+                    admin_vm->GetPendingAdminVmInfo());
+                  if (admin_vm->HasPendingVmInfo())
                   {
                     vm_info_list.setWithCaveats(
-                      vm_info_list_index++, admin_vm->pending_vm_info.get());
+                      vm_info_list_index++, admin_vm->GetPendingVmInfo());
                   }
-                  admin_vm->pending_vm_info_message_builder.reset();
+                  admin_vm->FreeVmInfo();
                 }
-
-                auto vm_list_message = SocketMessage::CopyFromMessageBuilder(
-                  vm_info_list_.GetMessageBuilder());
                 std::for_each(vm_list_viewers_.begin(), vm_list_viewers_.end(),
-                  [&vm_list_message](auto& viewer)
+                  [vm_list_message=vm_info_list_.GetMessage()](auto& viewer)
                   {
                     viewer->QueueMessage(vm_list_message);
                   });
-                auto admin_vm_list_message = SocketMessage::CopyFromMessageBuilder(
-                  admin_vm_info_list_.GetMessageBuilder());
-                BroadcastToViewingAdmins(admin_vm_list_message);
-              }));
+                BroadcastToViewingAdmins(admin_vm_info_list_.GetMessage());
+              })));
         }
       }
 
       void UpdateVirtualMachineInfo(AdminVirtualMachine<TClient>& vm) {
         const auto vm_id = vm.GetId();
-        auto message_builder =
-          std::make_unique<capnp::MallocMessageBuilder>();
-        auto admin_vm_info = message_builder->getOrphanage()
-          .newOrphan<CollabVmServerMessage::AdminVmInfo>();
-        auto vm_info = message_builder->getOrphanage()
-          .newOrphan<CollabVmServerMessage::VmInfo>();
-        vm.SetVmInfo(admin_vm_info.get(), vm_info.get(),
-          server_.virtual_machines_.wrap(
-            [this, vm_id, message_builder = std::move(message_builder),
-              admin_vm_info = std::move(admin_vm_info),
-              vm_info = std::move(vm_info)]
-            (auto&, auto set_vm_info, auto thumbnail) mutable
-          {
-            auto vm_data = admin_virtual_machines_[vm_id];
-            if (vm_data->pending_vm_info_message_builder)
+        vm.SetVmInfo(
+          VmInfoProducer(server_.virtual_machines_.wrap(
+            [this, vm_id](auto&, auto& vm_info_producer) mutable
             {
-              // A bulk update is already in progress
-              vm_data->pending_vm_info_message_builder =
-                std::move(message_builder);
-              vm_data->pending_admin_vm_info = std::move(admin_vm_info);
-              vm_data->pending_vm_info = std::move(vm_info);
-              return;
-            }
-            admin_vm_info_list_.UpdateElement(
-              [vm_id](auto vm_info)
+              auto& vm_data = *admin_virtual_machines_[vm_id];
+              if (vm_data.HasPendingAdminVmInfo())
               {
-                return vm_info.getId() == vm_id;
-              }, admin_vm_info.get());
-            auto admin_vm_list_message = SocketMessage::CopyFromMessageBuilder(
-              admin_vm_info_list_.GetMessageBuilder());
-            BroadcastToViewingAdmins(admin_vm_list_message);
+                // A bulk update is already in progress
+                vm_data.SetPendingVmInfo(
+                  std::move(vm_info_producer.message_builder),
+                  std::move(vm_info_producer.admin_vm_info),
+                  std::move(vm_info_producer.vm_info));
+                return;
+              }
+              admin_vm_info_list_.UpdateElement(
+                [vm_id](auto vm_info)
+                {
+                  return vm_info.getId() == vm_id;
+                }, vm_info_producer.admin_vm_info.get());
+              BroadcastToViewingAdmins(admin_vm_info_list_.GetMessage());
 
-            if (!set_vm_info)
-            {
-              return;
-            }
-            vm_info_list_.UpdateElement(
-              [vm_id](auto vm_info)
-              {
-                return vm_info.getId() == vm_id;
-              }, vm_info.get());
-            auto vm_list_message = SocketMessage::CopyFromMessageBuilder(
-              vm_info_list_.GetMessageBuilder());
-            std::for_each(vm_list_viewers_.begin(), vm_list_viewers_.end(),
-                          [&vm_list_message](auto& viewer)
-                          {
-                            viewer->QueueMessage(vm_list_message);
-                          });
-          }));
+              if (vm_data.has_vm_info) {
+                auto predicate = [vm_id](auto vm_info)
+                  {
+                    return vm_info.getId() == vm_id
+                      && !vm_info.getHost().size();
+                  };
+                if (vm_info_producer.vm_info == nullptr) {
+                  vm_info_list_.RemoveFirst(std::move(predicate));
+                  vm_data.has_vm_info = false;
+                } else {
+                  vm_info_list_.UpdateElement(
+                    std::move(predicate), vm_info_producer.vm_info.get());
+                }
+              } else {
+                if (vm_info_producer.vm_info == nullptr) {
+                  return;
+                }
+                vm_info_list_.Add(vm_info_producer.vm_info.get());
+                vm_data.has_vm_info = true;
+              }
+              std::for_each(vm_list_viewers_.begin(), vm_list_viewers_.end(),
+                [vm_list_message=vm_info_list_.GetMessage()](auto& viewer)
+                {
+                  viewer->QueueMessage(vm_list_message);
+                });
+            })));
       }
 
       template <typename TFunction>
       struct ResizableList
       {
         using List = TFunction;
-        explicit ResizableList(
-          std::unique_ptr<capnp::MallocMessageBuilder> message_builder) :
-          message_builder_(std::move(message_builder)),
-          list_(TFunction::GetList(*message_builder_))
+        explicit ResizableList(std::shared_ptr<SharedSocketMessage>&& message)
+          : message_(
+              std::forward<std::shared_ptr<SharedSocketMessage>>(message)),
+            list_(TFunction::GetList(message_->GetMessageBuilder()))
         {
         }
 
         ResizableList() :
-          message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
-          list_(TFunction::InitList(*message_builder_, 0))
+          message_(SocketMessage::CreateShared()),
+          list_(TFunction::InitList(message_->GetMessageBuilder(), 0))
         {
         }
 
         auto Add()
         {
-          auto message_builder =
-            std::make_unique<capnp::MallocMessageBuilder>();
-          auto vm_list = TFunction::InitList(*message_builder, list_.size() + 1);
+          auto message = SocketMessage::CreateShared();
+          auto vm_list = TFunction::InitList(message->GetMessageBuilder(), list_.size() + 1);
           std::copy(list_.begin(), list_.end(), vm_list.begin());
           list_ = vm_list;
-          message_builder_ = std::move(message_builder);
+          message_ = std::move(message);
           return vm_list[vm_list.size() - 1];
+        }
+
+        template<typename TNewElement>
+        void Add(TNewElement new_element)
+        {
+          auto message = SocketMessage::CreateShared();
+          auto vm_list = TFunction::InitList(message->GetMessageBuilder(), list_.size() + 1);
+          std::copy(list_.begin(), list_.end(), vm_list.begin());
+          list_ = vm_list;
+          message_ = std::move(message);
+          vm_list.setWithCaveats(vm_list.size() - 1, new_element);
         }
 
         template<typename TPredicate>
         void RemoveFirst(TPredicate&& predicate)
         {
-          auto message_builder =
-            std::make_unique<capnp::MallocMessageBuilder>();
-          auto vm_list = TFunction::InitList(*message_builder, list_.size() - 1);
+          auto message = SocketMessage::CreateShared();
+          auto vm_list =
+            TFunction::InitList(message->GetMessageBuilder(), list_.size() - 1);
           const auto copy_end =
             std::remove_copy_if(list_.begin(), list_.end(),
                                 vm_list.begin(), std::move(predicate));
           assert(copy_end == vm_list.end());
           list_ = vm_list;
-          message_builder_ = std::move(message_builder);
+          message_ = std::move(message);
         }
 
         template<typename TPredicate, typename TNewElement>
         void UpdateElement(TPredicate&& predicate, TNewElement new_element)
         {
-          auto message_builder =
-            std::make_unique<capnp::MallocMessageBuilder>();
+          auto message = SocketMessage::CreateShared();
           const auto size = list_.size();
-          auto new_vm_list = TFunction::InitList(*message_builder, size);
+          auto new_vm_list =
+            TFunction::InitList(message->GetMessageBuilder(), size);
           for (auto i = 0u; i < size; i++)
           {
             new_vm_list.setWithCaveats(
               i, predicate(list_[i]) ? new_element : list_[i]);
           }
           list_ = new_vm_list;
-          message_builder_ = std::move(message_builder);
+          message_ = std::move(message);
         }
 
         void Reset(unsigned capacity)
         {
-          list_ = TFunction::InitList(*message_builder_, capacity);
+          message_ = SocketMessage::CreateShared();
+          list_ =
+            TFunction::InitList(message_->GetMessageBuilder(), capacity);
         }
 
         capnp::MallocMessageBuilder& GetMessageBuilder() const
         {
-          return *message_builder_;
+          return message_->GetMessageBuilder();
         }
 
+        std::shared_ptr<SharedSocketMessage> GetMessage() const
+        {
+          return message_;
+        }
       private:
-        std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
+        std::shared_ptr<SharedSocketMessage> message_;
         using ListType = std::invoke_result_t<decltype(TFunction::GetList),
           capnp::MallocMessageBuilder&>;
         ListType list_;
@@ -2420,17 +2929,41 @@ namespace CollabVm::Server
       ResizableList<InitVmInfo> vm_info_list_;
       ResizableList<InitAdminVmInfo> admin_vm_info_list_;
 
-      std::unordered_map<std::uint32_t,
-        std::shared_ptr<VirtualMachine<TClient>>> virtual_machines_;
-
       struct AdminVm
       {
         template<typename... TArgs>
-        explicit AdminVm(TArgs&&... args)
+        explicit AdminVm(TArgs&& ... args)
           : vm(std::forward<TArgs>(args)...)
         {
         }
         AdminVirtualMachine<TClient> vm;
+        void SetPendingVmInfo(
+            std::unique_ptr<capnp::MallocMessageBuilder>&& message_builder,
+            capnp::Orphan<CollabVmServerMessage::AdminVmInfo>&& admin_vm_info,
+            capnp::Orphan<CollabVmServerMessage::VmInfo>&& vm_info) {
+          pending_admin_vm_info = std::move(admin_vm_info);
+          pending_vm_info = std::move(vm_info);
+          pending_vm_info_message_builder = std::move(message_builder);
+        }
+        CollabVmServerMessage::VmInfo::Reader GetPendingVmInfo() const {
+          return pending_vm_info.getReader();
+        }
+        CollabVmServerMessage::AdminVmInfo::Reader GetPendingAdminVmInfo() const {
+          return pending_admin_vm_info.getReader();
+        }
+        bool HasPendingAdminVmInfo() const {
+          return pending_admin_vm_info != nullptr;
+        }
+        bool HasPendingVmInfo() const {
+          return pending_vm_info != nullptr;
+        }
+        void FreeVmInfo() {
+          pending_admin_vm_info = {};
+          pending_vm_info       = {};
+          pending_vm_info_message_builder.reset();
+        }
+        bool has_vm_info = false;
+      private:
         std::unique_ptr<capnp::MallocMessageBuilder> pending_vm_info_message_builder;
         capnp::Orphan<CollabVmServerMessage::AdminVmInfo> pending_admin_vm_info;
         capnp::Orphan<CollabVmServerMessage::VmInfo> pending_vm_info;
@@ -2440,7 +2973,14 @@ namespace CollabVm::Server
       CollabVmServer& server_;
       std::vector<std::shared_ptr<TClient>> vm_list_viewers_;
       std::vector<std::shared_ptr<TClient>> admin_vm_list_viewers_;
+      using ThumbnailKey = std::pair<std::string, std::uint32_t>;
+      std::unordered_map<ThumbnailKey,
+        std::shared_ptr<SharedSocketMessage>,
+        boost::hash<ThumbnailKey>> thumbnails_;
     };
+
+    const std::chrono::seconds vm_info_update_frequency_ =
+      std::chrono::seconds(10);
 
     Database db_;
     StrandGuard<ServerSettingsList> settings_;
@@ -2462,8 +3002,9 @@ namespace CollabVm::Server
     StrandGuard<VirtualMachinesList<CollabVmSocket<typename TServer::TSocket>>>
     virtual_machines_;
     Strand login_strand_;
-    StrandGuard<UserChannel<Socket>> global_chat_room_;
+    StrandGuard<UserChannel<Socket, typename CollabVmSocket<typename TServer::TSocket>::UserData>> global_chat_room_;
     std::uniform_int_distribution<std::uint32_t> guest_rng_;
-    std::default_random_engine rng_;
+    std::default_random_engine rng_{std::random_device()()};
+    boost::asio::steady_timer vm_info_timer_;
   };
 } // namespace CollabVm::Server

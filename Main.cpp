@@ -27,9 +27,9 @@ void Start(const std::string& root,
            const std::uint8_t threads,
            const std::string host,
            uint16_t port,
-           bool auto_start) {
+           bool auto_start_vms) {
   using ThreadPool = CollabVm::Server::ThreadPool<SingleThreaded>;
-  Server<ThreadPool>(root, threads).Start(host, port, auto_start);
+  Server<ThreadPool>(root, threads).Start(host, port, auto_start_vms);
 }
 
 int main(const int argc, const char* argv[]) {
@@ -97,10 +97,10 @@ int main(const int argc, const char* argv[]) {
 	  threads = std::max(cores / 2, 1u);
   }
 
-  const auto auto_start = !vars.count("no-autostart");
+  const auto auto_start_vms = !vars.count("no-autostart");
   if (threads == 1) {
-    Start<true>(root, threads, host, port, auto_start);
+    // Start<true>(root, threads, host, port, auto_start_vms);
   } else {
-    Start<false>(root, threads, host, port, auto_start);
+    Start<false>(root, threads, host, port, auto_start_vms);
   }
 }

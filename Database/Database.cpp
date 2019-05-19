@@ -30,20 +30,8 @@ Database::Database()
   if (db_.schema_version() == 0) {
     odb::schema_catalog::create_schema(db_);
     std::cout << "A new database has been created" << std::endl;
+    t.commit();
   }
-
-  /*
-
-          // Load all the VMs and add them to the map
-          // TODO: catch exceptions
-          odb::result<VmConfig> vms = db_.query<VmConfig>();
-          for (auto&& vm : vms) {
-                  // it.load(vm);
-                  VirtualMachines[vm.Name] = std::make_shared<VmConfig>(vm);
-          }
-
-  */
-  t.commit();
 
   c->execute("PRAGMA foreign_keys=ON");
 }
@@ -349,9 +337,6 @@ void Database::AddVm(std::shared_ptr<VmConfig>& vm) {
   db_.persist(*vm);
 
   t.commit();
-
-  // Add the VM to the map
-  //  VirtualMachines[vm->Name] = vm;
 }
 
 void Database::UpdateVm(std::shared_ptr<VmConfig>& vm) {
@@ -360,8 +345,6 @@ void Database::UpdateVm(std::shared_ptr<VmConfig>& vm) {
   db_.update(*vm);
 
   t.commit();
-
-  // VirtualMachines[vm->name] = vm;
 }
 
 }  // namespace CollabVm::Server

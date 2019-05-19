@@ -39,8 +39,10 @@ extern "C" {
 #include <freerdp/addin.h>
 #include "protocols/rdp/client.h"
 #include <atomic>
+#include <fstream>
 #include <string_view>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <map>
 #include <unordered_map>
@@ -237,6 +239,23 @@ struct TestGuacamoleWebSocket
       buffer_data.size() / sizeof(capnp::word));
     auto reader = capnp::FlatArrayMessageReader(array_ptr);
     auto instr = reader.getRoot<Guacamole::GuacClientInstruction>();
+
+    static auto created_screenshot = false;
+    if (instr.isKey() && !created_screenshot)
+    {
+      auto png = std::ofstream("preview.png", std::ios::out | std::ios::binary);
+      using file_char_type = std::remove_reference<decltype(png)>::type::char_type;
+      guacamole_client_.CreateScreenshot([&png](const auto png_bytes)
+      {
+        std::cout << "png_bytes.size(): " << png_bytes.size() << std::endl;
+        png.write(
+          reinterpret_cast<const file_char_type*>(png_bytes.data()),
+          png_bytes.size());
+      });
+      created_screenshot = true;
+      return;
+    }
+
     guacamole_client_.ReadInstruction(instr);
   }
 
@@ -331,7 +350,7 @@ struct TestGuacamoleWebSocket
     std::cout << message << std::endl;
   }
 
-  void OnInstruction(capnp::MallocMessageBuilder&& message_builder)
+  void OnInstruction(capnp::MallocMessageBuilder& message_builder)
   {
     auto message = std::make_shared<kj::Array<capnp::word>>(
       capnp::messageToFlatArray(message_builder));
@@ -343,6 +362,10 @@ struct TestGuacamoleWebSocket
           websocket.Send(message);
         }
       });
+  }
+
+  void OnFlush()
+  {
   }
 
 private:

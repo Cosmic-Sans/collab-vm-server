@@ -30,7 +30,8 @@ class TestUserTurnController final : public UserTurnController {
 int main(int argc, char** args)
 {
   auto io_context = boost::asio::io_context();
-  auto turn_controller = TestUserTurnController(io_context, std::chrono::seconds(5));
+  auto turn_controller = TestUserTurnController(io_context);
+  turn_controller.SetTurnTime(std::chrono::seconds(5));
 
   const auto user1 = std::make_shared<TestUser>("user1");
   turn_controller.RequestTurn(user1);

@@ -3,7 +3,6 @@
 #include <boost/asio/ssl/stream.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/beast/websocket.hpp>
 #include <boost/iostreams/device/array.hpp>
 #include <boost/iostreams/stream.hpp>
 // TODO: Replace Boost Property Tree with Cap'N Proto's JSON parser
@@ -46,7 +45,7 @@ class RecaptchaVerifier {
  public:
   explicit RecaptchaVerifier(boost::asio::io_context& io_context,
                              boost::asio::ssl::context& ssl_ctx,
-                             const std::string& recaptcha_key)
+                             const std::string& recaptcha_key="")
       : queue_strand_(io_context),
         resolver_(io_context),
         stream_(io_context, ssl_ctx),

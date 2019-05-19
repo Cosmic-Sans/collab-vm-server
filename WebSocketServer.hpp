@@ -297,12 +297,17 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
   template <class ConstBufferSequence, class WriteHandler>
-  void WriteMessage(const ConstBufferSequence& buffers,
+  void WriteMessage(ConstBufferSequence&& buffers,
                     WriteHandler&& handler) {
     socket_.dispatch([
-      self = this->shared_from_this(), &buffers,
-      handler = std::forward<WriteHandler>(handler)
-    ](auto& sockets) { sockets.websocket.async_write(buffers, handler); });
+        self = this->shared_from_this(),
+        buffers = std::forward<ConstBufferSequence>(buffers),
+        handler = std::forward<WriteHandler>(handler)
+      ](auto& sockets) mutable {
+        sockets.websocket.async_write(
+          std::forward<ConstBufferSequence>(buffers),
+          std::forward<WriteHandler>(handler));
+      });
   }
 
   void Close() {
@@ -517,7 +522,7 @@ struct ThreadPool {
     void on_work_finished() const {
     }
    private:
-    asio::io_context& io_context_;
+    asio::io_context& const io_context_;
   };
 
   using Strand = NullStrand;
@@ -591,13 +596,12 @@ class WebServer : public TThreadPool {
     acceptor_.bind(ep);
     acceptor_.listen();
 
-    //    sockets_strand_.dispatch([this] { DoAccept(); });
     DoAccept();
 
     TThreadPool::RunWorkers();
   }
 
-  void Stop() {
+  virtual void Stop() {
     auto ec = boost::system::error_code();
     interrupt_signal_.cancel(ec);
     acceptor_.close(ec);
@@ -613,11 +617,14 @@ class WebServer : public TThreadPool {
     });
   }
 
+  boost::asio::io_context& GetContext() {
+    return TThreadPool::io_context_;
+  }
  protected:
   using TSocket = WebServerSocket<WebServer, TThreadPool>;
 
   virtual std::shared_ptr<TSocket> CreateSocket(
-      asio::io_context& io_context,
+      boost::asio::io_context& io_context,
       const boost::filesystem::path& doc_root) = 0;
 
  private:

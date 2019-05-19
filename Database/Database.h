@@ -121,11 +121,6 @@ class Database {
 
   bool DeleteInvite(const std::string& id);
 
-  /**
-   * Save a newly created virtual machine to the DB and
-   * add it to the map. The virtual machine will be assigned
-   * a new ID.
-   */
   void AddVm(std::shared_ptr<VmConfig>& vm);
 
   void UpdateVm(std::shared_ptr<VmConfig>& vm);
@@ -139,7 +134,7 @@ class Database {
 
   std::uint32_t GetNewVmId() {
     odb::transaction tran(db_.begin());
-    return db_.query_value<NewVmId>().Id;
+    return (std::max)(db_.query_value<NewVmId>().Id, 1u);
   }
 
   /*
