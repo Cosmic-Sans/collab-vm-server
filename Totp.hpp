@@ -5,6 +5,7 @@
 #include <boost/endian/conversion.hpp>
 #include <boost/range/counting_range.hpp>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <gsl/span>
 
@@ -25,9 +26,9 @@ inline int GenerateTotp(
                           reinterpret_cast<const uint8_t*>(&timer),
                           sizeof(timer), nullptr, nullptr),
                      SHA_DIGEST_LENGTH);
-	constexpr unsigned long lowest_4_bits = (1 << 4) - 1;
+	constexpr unsigned long lowest_4_bits = (1u << 4) - 1;
   const int offset = digest[SHA_DIGEST_LENGTH - 1] & lowest_4_bits;
-  constexpr unsigned long lowest_31_bits = (1 << 31) - 1;
+  constexpr unsigned long lowest_31_bits = (1u << 31) - 1;
   const int binary = boost::endian::endian_reverse(
                          *reinterpret_cast<const int*>(&digest[offset])) &
                      lowest_31_bits;

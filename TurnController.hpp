@@ -23,7 +23,15 @@ class TurnController {
         RemoveUser(current_user);
       }
     });
-    OnCurrentUserChanged(turn_queue_);
+    OnCurrentUserChanged(
+      turn_queue_,
+      std::chrono::duration_cast<std::chrono::milliseconds>(turn_time_));
+  }
+
+  std::chrono::milliseconds GetTimeRemaining() const
+  {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+      turn_timer_.expiry() - std::chrono::steady_clock::now());
   }
 public:
   explicit TurnController(boost::asio::io_context& io_context) :
@@ -44,6 +52,13 @@ public:
     }
   };
 
+  auto GetCurrentUser() const
+  {
+    return turn_queue_.empty()
+             ? std::optional<TUserPtr>()
+             : turn_queue_.front();
+  }
+
   bool RequestTurn(TUserPtr user)
   {
     if (user->turn_queue_position_.has_value())
@@ -59,7 +74,7 @@ public:
     }
     else
     {
-      OnUserAdded(turn_queue_);
+      OnUserAdded(turn_queue_, GetTimeRemaining());
     }
     return true;
   }
@@ -84,7 +99,7 @@ public:
     {
       if (turn_queue_.empty())
       {
-        OnCurrentUserChanged(turn_queue_);
+        OnCurrentUserChanged(turn_queue_, std::chrono::milliseconds(0));
       }
       else
       {
@@ -93,7 +108,7 @@ public:
     }
     else
     {
-      OnUserRemoved(turn_queue_);
+      OnUserRemoved(turn_queue_, GetTimeRemaining());
     }
     return true;
   }
@@ -111,9 +126,12 @@ public:
   }
 
 protected:
-  virtual void OnCurrentUserChanged(std::deque<TUserPtr>& users) = 0;
-  virtual void OnUserAdded(std::deque<TUserPtr>& users) = 0;
-  virtual void OnUserRemoved(std::deque<TUserPtr>& users) = 0;
+  virtual void OnCurrentUserChanged(
+    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
+  virtual void OnUserAdded(
+    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
+  virtual void OnUserRemoved(
+    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
 };
 
 }

@@ -11,8 +11,8 @@ target_link_libraries(totp OpenSSL::Crypto)
 add_test(totp totp)
 
 add_executable(guac-test Guacamole.cpp)
-target_include_directories(guac-test PUBLIC ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR} ${GUACAMOLE_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/submodules/GSL/include)
-target_link_libraries(guac-test ${Boost_LIBRARIES} CapnProto::capnp guacamole)
+target_include_directories(guac-test PUBLIC ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR} ${Cairo_INCLUDE_DIR} ${GUACAMOLE_INCLUDE_DIRS} ${OPENSSL_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/submodules/GSL/include)
+target_link_libraries(guac-test ${Boost_LIBRARIES} CapnProto::capnp ${Cairo_LIBRARY} guacamole)
 add_test(guac-test guac-test)
 add_dependencies(guac-test guacamole)
 

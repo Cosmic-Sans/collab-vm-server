@@ -435,8 +435,9 @@ int main()
     // {"port", "5900"}
     {"port", "3389"}
   };
-  guacamole_client.StartRDP(args);
+  guacamole_client.SetArguments(args);
   // guacamole_client.StartVNC(args);
+  guacamole_client.StartRDP();
 
   auto websockets_strand = boost::asio::io_context::strand(io_context);
 

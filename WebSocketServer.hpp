@@ -369,7 +369,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                                    TDestination dest) {
       const auto bytes = ip_address.to_bytes();
       std::copy_n(reinterpret_cast<
-                      const std::iterator_traits<TDestination>::value_type*>(
+                      const typename std::iterator_traits<TDestination>::value_type*>(
                       bytes.data()),
                   bytes.size(), dest);
     }
@@ -533,7 +533,7 @@ struct ThreadPool {
     void on_work_finished() const {
     }
    private:
-    asio::io_context& const io_context_;
+    asio::io_context& io_context_;
   };
 
   using Strand = NullStrand;

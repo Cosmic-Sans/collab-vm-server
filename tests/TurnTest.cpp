@@ -16,13 +16,19 @@ public:
 
 class TestUserTurnController final : public UserTurnController {
   using UserTurnController::UserTurnController;
-  void OnCurrentUserChanged(std::deque<TestUserPtr>& users) override
+  void OnCurrentUserChanged(
+    std::deque<TestUserPtr>& users,
+    std::chrono::milliseconds time_remaining) override
   {
   }
-  void OnUserAdded(std::deque<TestUserPtr>& users)  override
+  void OnUserAdded(
+    std::deque<TestUserPtr>& users,
+    std::chrono::milliseconds time_remaining) override
   {
   }
-  void OnUserRemoved(std::deque<TestUserPtr>& users) override
+  void OnUserRemoved(
+    std::deque<TestUserPtr>& users,
+    std::chrono::milliseconds time_remaining) override
   {
   }
 };
@@ -35,6 +41,8 @@ int main(int argc, char** args)
 
   const auto user1 = std::make_shared<TestUser>("user1");
   turn_controller.RequestTurn(user1);
+
+  const auto current_user = turn_controller.GetCurrentUser();
 
   const auto user2 = std::make_shared<TestUser>("user2");
   turn_controller.RequestTurn(user2);

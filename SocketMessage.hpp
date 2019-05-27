@@ -62,7 +62,7 @@ struct SharedSocketMessage final : SocketMessage
 
   ~SharedSocketMessage() = default;
 
-  capnp::MallocMessageBuilder& const GetMessageBuilder() {
+  capnp::MallocMessageBuilder& GetMessageBuilder() {
     assert(frame_.empty() && framed_buffers_.empty());
     return shared_message_builder;
   }

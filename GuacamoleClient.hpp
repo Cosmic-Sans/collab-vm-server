@@ -13,6 +13,7 @@ extern "C" {
 }
 #ifdef WIN32
 # undef CONST
+# undef ERROR
 # undef min
 # undef max
 #endif
@@ -45,38 +46,24 @@ public:
   {
   }
 
-  /**
-   * Start a new RDP connection using the previously provided arguments.
-   */
   void StartRDP()
   {
-    StartRDP(std::nullopt);
+    Start(guac_rdp_client_init);
   }
 
-  /**
-   * Start a new RDP connection using the provided arguments.
-   */
-  void StartRDP(
-    const std::unordered_map<std::string_view, std::string_view>& args)
-  {
-    StartRDP(std::optional(std::reference_wrapper(args)));
-  }
-
-  /**
-   * Start a new VNC connection using the previously provided arguments.
-   */
   void StartVNC()
   {
-    StartVNC(std::nullopt);
+    Start(guac_vnc_client_init);
   }
 
-  /**
-   * Start a new VNC connection using the provided arguments.
-   */
-  void StartVNC(
+  void SetArguments(
     const std::unordered_map<std::string_view, std::string_view>& args)
   {
-    StartVNC(std::optional(std::reference_wrapper(args)));
+    args_map_ = args;
+    if (client_)
+    {
+      args_ = CreateArgsArray(args_map_, client_->args);
+    }
   }
 
   void Stop()
@@ -127,6 +114,7 @@ public:
     user->info.audio_mimetypes = audio_mimetypes;
     client_->join_handler(user, args_.size(), const_cast<char**>(args_.data()));
     client_->leave_handler(user);
+    guac_socket_free(user->socket);
     guac_user_free(user);
   }
 
@@ -151,7 +139,7 @@ public:
     AddUser([display](auto&& message_builder)
     {
       guacenc_handle_instruction(
-        display, message_builder.getRoot<Guacamole::GuacServerInstruction>());
+        display, message_builder.template getRoot<Guacamole::GuacServerInstruction>());
     });
     // The default layer should now contain the flattened image
     const auto default_layer = guacenc_display_get_layer(display, 0);
@@ -224,22 +212,7 @@ private:
     return ssize_t(0);
   }
 
-  void StartRDP(
-    const std::optional<std::reference_wrapper<
-      const std::unordered_map<std::string_view, std::string_view>>> args)
-  {
-    Start(guac_rdp_client_init, args);
-  }
-
-  void StartVNC(const std::optional<std::reference_wrapper<
-    const std::unordered_map<std::string_view, std::string_view>>> args)
-  {
-    Start(guac_vnc_client_init, args);
-  }
-
-  void Start(guac_client_init_handler& init_handler,
-    const std::optional<std::reference_wrapper<
-    const std::unordered_map<std::string_view, std::string_view>>> args)
+  void Start(guac_client_init_handler& init_handler)
   {
     CreateClient();
     if (init_handler(client_.get()))
@@ -247,14 +220,7 @@ private:
       throw std::exception();
     }
     CreateUser();
-    if (args)
-    {
-      args_ = CreateArgsArray(args.value().get(), client_->args);
-    }
-    else if (args_.empty())
-    {
-      args_ = CreateArgsArray({}, client_->args);
-    }
+    args_ = CreateArgsArray(args_map_, client_->args);
     guac_client_add_user(client_.get(), user_.get(), args_.size(),
       const_cast<char**>(args_.data()));
   }
@@ -390,6 +356,7 @@ private:
   std::unique_ptr<guac_user, decltype(&guac_user_free)> user_;
   std::unique_ptr<guac_client, decltype(&guac_client_free)> client_;
   std::vector<const char*> args_;
+  std::unordered_map<std::string_view, std::string_view> args_map_;
 
   enum class State : std::uint8_t
   {

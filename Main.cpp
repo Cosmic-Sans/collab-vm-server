@@ -1,3 +1,11 @@
+#include "CollabVm.capnp.h"
+#include "Guacamole.capnp.h"
+#include <capnp/any.h>
+#include <capnp/blob.h>
+#include <capnp/common.h>
+#include <capnp/dynamic.h>
+#include <capnp/layout.h>
+#include <capnp/schema.h>
 #include "GuacamoleClient.hpp"
 #include <argon2.h>
 #include <openssl/opensslv.h>
@@ -10,8 +18,6 @@
 #include <algorithm>
 #include <thread>
 #include <rfb/rfbconfig.h>
-#include <freerdp/api.h>
-// #define FREERDP_API
 #include <freerdp/freerdp.h>
 #include <cairo/cairo.h>
 
@@ -39,7 +45,7 @@ int main(const int argc, const char* argv[]) {
   desc.add_options()
     ("help,h", "display help message")
     ("version,v", "display version")
-    ("host,h", po::value<std::string>()->default_value("localhost"), "ip or host to listen on")
+    ("host,l", po::value<std::string>()->default_value("localhost"), "ip or host to listen on")
     ("port,p", po::value<uint16_t>()->default_value(80))
     ("root,r", po::value<std::string>()->default_value("."), "the root directory to serve files from")
     ("cert,c", po::value<std::string>(), "PEM certificate to use for SSL/TLS")
