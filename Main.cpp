@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <boost/program_options.hpp>
 #include <iostream>
-#include <odb/version.hxx>
+#include <sqlite_modern_cpp.h>
 #include <string>
 #include <algorithm>
 #include <thread>
@@ -71,7 +71,9 @@ int main(const int argc, const char* argv[]) {
 				"FreeRDP " << freerdp_get_version_string() << "\n"
         "Guacamole (patched)" "\n"
 				LIBVNCSERVER_PACKAGE_STRING "\n"
-        "ODB " LIBODB_VERSION_STR "\n"
+        "sqlite modern cpp " << MODERN_SQLITE_VERSION / 1000000 << '.'
+          << MODERN_SQLITE_VERSION / 1000 % 1000 << '.'
+          << MODERN_SQLITE_VERSION / 1000 % 1000 << "\n"
         "OpenSSL " OPENSSL_VERSION_TEXT "\n"
         "SQLite3 " SQLITE_VERSION "\n" << std::endl;
       return 0;

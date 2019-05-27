@@ -15,7 +15,6 @@ Requirements:
 * About 3 GiB of disk space for vcpkg packages and the [prebuilt Boost
   binaries](https://sourceforge.net/projects/boost/files/boost-binaries/) or 10
   GiB for only vcpkg packages
-* [ODB Compiler (odb-2.4.0-i686-windows)](https://www.codesynthesis.com/products/odb/download.xhtml)
 
 1. This repository relies on submodules. To clone both the repo and all of its submodules do:  
 	```git clone --recursive https://github.com/Cosmic-Sans/collab-vm-server.git```  
@@ -23,7 +22,7 @@ Or if you've already cloned it, you can download only the submodules by doing:
 	```git submodule update --init --recursive```
 1. After downloading vcpkg and running bootstrap-vcpkg.bat, use the following command to install all the required dependencies:
 	```
-	./vcpkg.exe install --triplet x86-windows cairo libjpeg-turbo libodb libodb-sqlite libpng openssl pthreads
+	./vcpkg.exe install --triplet x86-windows cairo libjpeg-turbo sqlite-modern-cpp libpng openssl pthreads
 	# If the prebuilt Boost binaries are not being used,
 	# add 'boost' to the list of packages above
 	```
@@ -60,11 +59,6 @@ Or if you've already cloned it, you can download only the submodules by doing:
 		  "name": "OPENSSL_ROOT_DIR",
 		  // Fix this path
 		  "value": "C:\\vcpkg\\installed\\x86-windows"
-		},
-		{
-		  "name": "ODB-COMPILER_ROOT",
-		  // Fix this path
-		  "value": "C:\\odb-2.4.0-i686-windows"
 		}
 	  ]
 	},

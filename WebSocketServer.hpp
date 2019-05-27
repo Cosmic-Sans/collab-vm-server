@@ -340,6 +340,17 @@ class WebServerSocket : public std::enable_shared_from_this<
 
     const std::string& AsString() const { return str_; }
     const IpBytes& AsBytes() const { return bytes_; }
+    std::vector<std::byte> AsVector() const
+    {
+      //return std::vector<std::byte>(bytes_.begin(), bytes_.end());
+      auto vector = std::vector<std::byte>();
+      vector.reserve(bytes_.size());
+      for (auto byte : bytes_)
+      {
+        vector.push_back(std::byte(byte));
+      }
+      return vector;
+    }
 
    private:
     // Creates an IPv4-mapped IPv6 address as described in section 2.5.5.2 of

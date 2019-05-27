@@ -13,23 +13,15 @@ install:
   - git -C C:\Tools\vcpkg\ pull
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
   # Install dependencies
-  - vcpkg.exe install --triplet %PLATFORM%-windows cairo libjpeg-turbo libodb libodb-sqlite libpng openssl pthreads
+  - vcpkg.exe install --triplet %PLATFORM%-windows cairo libjpeg-turbo sqlite-modern-cpp libpng openssl pthreads
   # Upgrade dependencies if they were cached
   - vcpkg.exe upgrade --triplet %PLATFORM%-windows --no-dry-run
-  - ps: |
-      if (-not (Test-Path C:\Tools\odb-2.4.0-i686-windows\))
-      {
-        # Download and extract the ODB compiler
-        Start-FileDownload -Url 'https://www.codesynthesis.com/download/odb/2.4/odb-2.4.0-i686-windows.zip' -FileName 'C:\Tools\odb-2.4.0-i686-windows.zip'
-        7z x C:\Tools\odb-2.4.0-i686-windows.zip -oC:\Tools\ 
-      }
 cache: 
   - C:\Tools\vcpkg\installed\
-  - C:\Tools\odb-2.4.0-i686-windows\
 build_script:
   - mkdir build
   - cd build
-  - cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows -DBOOST_ROOT=C:/Libraries/boost_1_69_0/ -DBoost_USE_STATIC_LIBS=ON -DBoost_USE_STATIC_RUNTIME=OFF -DODB-COMPILER_ROOT=C:/Tools/odb-2.4.0-i686-windows/ ..
+  - cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows -DBOOST_ROOT=C:/Libraries/boost_1_69_0/ -DBoost_USE_STATIC_LIBS=ON -DBoost_USE_STATIC_RUNTIME=OFF ..
   - cmake --build . --target install --config RelWithDebInfo
 artifacts:
   - path: install/

@@ -1,10 +1,7 @@
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 
-#include <odb/connection.hxx>
-#include <odb/database.hxx>
-#include <odb/schema-catalog.hxx>
-#include <odb/transaction.hxx>
 #ifdef WIN32
 #include <kj/windows-sanity.h>
 #undef VOID
@@ -15,25 +12,60 @@
 
 #include <argon2.h>
 #include "Database.h"
-#include "ServerConfig-odb.hxx"
-#include "VmConfig-odb.hxx"
 
 namespace CollabVm::Server {
 
-Database::Database()
-    : db_("collab-vm.db", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) {
-  odb::connection_ptr c(db_.connection());
-  c->execute("PRAGMA foreign_keys=OFF");
-
-  odb::transaction t(c->begin());
-
-  if (db_.schema_version() == 0) {
-    odb::schema_catalog::create_schema(db_);
+Database::Database() : db_("collab-vm.db") {
+  if (false) {
     std::cout << "A new database has been created" << std::endl;
-    t.commit();
   }
 
-  c->execute("PRAGMA foreign_keys=ON");
+  db_ << "PRAGMA foreign_keys = ON";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS User ("
+    "  Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,"
+    "  Username TEXT NOT NULL,"
+    "  PasswordHash BLOB(32) NOT NULL,"
+    "  PasswordSalt BLOB(32) NOT NULL,"
+    "  TotpKey BLOB(20) NULL,"
+    "  SessionId BLOB(16) NULL UNIQUE,"
+    "  RegistrationDate INTEGER NOT NULL,"
+    "  RegistrationIpAddr BLOB(16) NOT NULL,"
+    "  LastActiveIpAddr BLOB(16) NOT NULL,"
+    "  LastLogin INTEGER NOT NULL,"
+    "  LastFailedLogin INTEGER NULL,"
+    "  LastOnline INTEGER NOT NULL,"
+    "  FailedLogins INTEGER NOT NULL,"
+    "  IsAdmin INTEGER NOT NULL,"
+    "  IsDisabled INTEGER NOT NULL,"
+    "  CONSTRAINT Username_fk"
+    "    FOREIGN KEY (Username)"
+    "    REFERENCES UnavailableUsername (Username)"
+    "    DEFERRABLE INITIALLY DEFERRED)";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS UserInvite ("
+    "  Id TEXT NOT NULL PRIMARY KEY,"
+    "  Username TEXT NULL,"
+    "  InviteName TEXT NOT NULL,"
+    "  IsAdmin INTEGER NOT NULL,"
+    "  CONSTRAINT Username_fk"
+    "    FOREIGN KEY (Username)"
+    "    REFERENCES UnavailableUsername (Username)"
+    "    DEFERRABLE INITIALLY DEFERRED)";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS UnavailableUsername("
+    "  Username TEXT NOT NULL PRIMARY KEY)";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS ServerConfig ("
+    "  ID INTEGER NOT NULL PRIMARY KEY,"
+    "  Setting BLOB NOT NULL)";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS VmConfig ("
+    "  IDs_VmId INTEGER NOT NULL,"
+    "  IDs_SettingID INTEGER NOT NULL,"
+    "  Setting BLOB NOT NULL,"
+    "  PRIMARY KEY (IDs_VmId,"
+    "               IDs_SettingID))";
 }
 
 void Database::LoadServerSettings(
@@ -41,82 +73,94 @@ void Database::LoadServerSettings(
   auto fields = capnp::Schema::from<ServerSetting::Setting>().getUnionFields();
   const auto fields_count = fields.size();
 
-  odb::transaction tran(db_.begin());
-  odb::result<ServerConfig> settings(
-      db_.query<ServerConfig>("ORDER BY" + odb::query<ServerConfig>::ID));
-  auto db_settings_it = settings.begin();
-  for (auto setting_id = 0u; setting_id < fields_count; setting_id++) {
+  auto setting_id = 0u;
+  db_ <<
+    "SELECT ServerConfig.ID, ServerConfig.Setting"
+    "  FROM ServerConfig"
+    "  ORDER BY ServerConfig.ID"
+    >> [&](const std::uint8_t id, const std::vector<std::byte>& setting)
+    {
+      auto server_setting = settings_list[id].initSetting();
+      capnp::DynamicStruct::Builder dynamic_server_setting = server_setting;
+      const auto field = fields[id];
+      auto db_setting = capnp::readMessageUnchecked<ServerSetting::Setting>(
+          reinterpret_cast<const capnp::word*>(setting.data()));
+      if (db_setting.which() != setting_id) {
+        // The Setting union has the wrong field set
+        std::cout << "Warning: the server setting '"
+                  << field.getProto().getName().cStr() << "' was invalid"
+                  << std::endl;
+        dynamic_server_setting.clear(field);
+        db_ <<
+          "INSERT INTO ServerConfig (ID, Setting) VALUES (?, ?)"
+          << setting_id << CreateBlob(server_setting.asReader());
+        setting_id++;
+        return;
+      }
+      const capnp::DynamicStruct::Reader dynamic_db_setting = db_setting;
+      dynamic_server_setting.set(field, dynamic_db_setting.get(field));
+      setting_id++;
+    };
+  if (setting_id)
+  {
+    return;
+  }
+  // No settings in the DB, create defaults
+  for (; setting_id < fields_count; setting_id++) {
     auto server_setting = settings_list[setting_id].initSetting();
     capnp::DynamicStruct::Builder dynamic_server_setting = server_setting;
     const auto field = fields[setting_id];
-    if (db_settings_it != settings.end() && db_settings_it->ID == setting_id) {
-      auto db_setting = capnp::readMessageUnchecked<ServerSetting::Setting>(
-          reinterpret_cast<const capnp::word*>(db_settings_it->Setting.data()));
-      if (db_setting.which() == setting_id) {
-        const capnp::DynamicStruct::Reader dynamic_db_setting = db_setting;
-        dynamic_server_setting.set(field, dynamic_db_setting.get(field));
-        // Incrementing db_settings_it will invalidate the object so
-        // it needs to be done after the object has been copied into the list
-        db_settings_it++;
-        continue;
-      }
-      db_settings_it++;
-      // The Setting union has the wrong field set
-      std::cout << "Warning: the server setting '"
-                << field.getProto().getName().cStr() << "' was invalid"
-                << std::endl;
-    }
     dynamic_server_setting.clear(field);
-    db_.persist(ConvertToDbSetting(server_setting.asReader()));
+    db_ <<
+      "INSERT INTO ServerConfig (ID, Setting) VALUES (?, ?)"
+      << setting_id << CreateBlob(server_setting.asReader());
   }
-  tran.commit();
 }
 
 void Database::SaveServerSettings(
-    const capnp::List<ServerSetting>::Reader updates) {
-  odb::transaction tran(db_.begin());
-  for (auto update : updates) {
-    auto setting = ConvertToDbSetting(update.getSetting());
-    db_.update(setting);
+    const capnp::List<ServerSetting>::Reader settings_list) {
+  for (auto update : settings_list) {
+    auto server_setting = update.getSetting();
+    db_ <<
+      "UPDATE ServerConfig SET Setting=? WHERE ID=?"
+      << CreateBlob(server_setting)
+      << static_cast<std::uint8_t>(server_setting.which());
   }
-  tran.commit();
-}
-ServerConfig Database::ConvertToDbSetting(
-    const ServerSetting::Setting::Reader& server_setting) const {
-  // capnp::copyToUnchecked requires the target buffer to have an extra word
-  const auto blob_word_size = server_setting.totalSize().wordCount + 1;
-  std::vector<uint8_t> setting_blob(blob_word_size * sizeof(capnp::word));
-  capnp::copyToUnchecked(
-      server_setting,
-      kj::arrayPtr(reinterpret_cast<capnp::word*>(&*setting_blob.begin()),
-                   blob_word_size));
-  return {static_cast<uint8_t>(server_setting.which()),
-          std::move(setting_blob)};
 }
 
-VmConfig Database::ConvertToVmSetting(
-    const std::uint32_t vm_id,
-    const VmSetting::Setting::Reader& setting) const {
-  // capnp::copyToUnchecked requires the target buffer to have an extra word
-  const auto blob_word_size = setting.totalSize().wordCount + 1;
-  std::vector<std::uint8_t> setting_blob(blob_word_size * sizeof(capnp::word));
-  capnp::copyToUnchecked(
-      setting,
-      kj::arrayPtr(reinterpret_cast<capnp::word*>(&*setting_blob.begin()),
-                   blob_word_size));
-  return {vm_id, static_cast<std::uint8_t>(setting.which()),
-          std::move(setting_blob)};
+void Database::CreateVm(const std::uint32_t vm_id,
+    const capnp::List<VmSetting>::Reader settings_list) {
+  for (auto update : settings_list) {
+    auto server_setting = update.getSetting();
+    db_ <<
+      "INSERT INTO VmConfig (IDs_VmId, IDs_SettingID, Setting) VALUES (?, ?, ?)"
+      << vm_id
+      << static_cast<std::uint8_t>(server_setting.which())
+      << CreateBlob(server_setting);
+  }
 }
 
-User::PasswordHash Database::HashPassword(const std::string& password,
-                                       const User::PasswordSalt& salt) {
+void Database::UpdateVmSettings(const std::uint32_t vm_id,
+    const capnp::List<VmSetting>::Reader settings_list) {
+  for (auto update : settings_list) {
+    auto server_setting = update.getSetting();
+    db_ <<
+      "UPDATE VmConfig SET Setting=? WHERE IDs_VmId=? AND IDs_SettingID=?"
+      << CreateBlob(server_setting)
+      << vm_id
+      << static_cast<std::uint8_t>(server_setting.which());
+  }
+}
+
+Database::PasswordHash Database::HashPassword(const std::string& password,
+                                       const PasswordSalt& salt) {
   const auto time_cost = 2;
   const auto mem_cost = 32 * 1024;
   const auto parallelism = 1;
-  User::PasswordHash hash;
+  PasswordHash hash(User::password_hash_len);
   argon2i_hash_raw(time_cost, mem_cost, parallelism, password.c_str(),
-                   password.length(), salt.data(), Database::password_salt_len,
-                   hash.data(), Database::password_hash_len);
+                   password.length(), salt.data(), User::password_salt_len,
+                   hash.data(), User::password_hash_len);
   return hash;
 }
 
@@ -124,8 +168,8 @@ CollabVmServerMessage::RegisterAccountResponse::RegisterAccountError
 Database::CreateAccount(
     const std::string& username,
     const std::string& password,
-    const std::optional<gsl::span<const std::byte, TOTP_KEY_LEN>> totp_key,
-    const std::array<std::uint8_t, 16>& ip_address) {
+    const std::optional<gsl::span<const std::byte, User::totp_key_len>> totp_key,
+    const IpAddress& ip_address) {
   //  if (!std::regex_match(username, username_re_)) {
   //    error =
   //    CollabVmServerMessage::RegisterAccountResponse::RegisterAccountError::USERNAME_INVALID;
@@ -144,29 +188,35 @@ Database::CreateAccount(
     }
   */
 
-  auto username_ptr = std::make_unique<UnavailableUsername>(username);
-  try {
-    odb::transaction t(db_.begin());
-    db_.persist(*username_ptr);
-    t.commit();
-  } catch (const odb::object_already_persistent&) {
+  if (!CreateReservedUsername(username)) {
     return CollabVmServerMessage::RegisterAccountResponse::
         RegisterAccountError::USERNAME_TAKEN;
   }
 
   const auto salt = GeneratePasswordSalt();
   const auto hash = HashPassword(password, salt);
-  User user(std::move(username_ptr), hash, salt,
-            totp_key ? nullptr
-                     : reinterpret_cast<const std::uint8_t*>(totp_key->data()),
-            ip_address);
+  User user;
+  user.username = username;
+  user.password_hash = hash;
+  user.password_salt = salt;
+  if (totp_key)
+  {
+    for (auto byte : totp_key.value())
+    {
+      user.totp_key.push_back(std::byte(byte));
+    }
+  }
+  user.last_online = user.last_login = user.registration_date = GetCurrentTimestamp();
+  user.last_active_ip_address = 
+    user.registration_ip_address = ip_address;
   try {
-    odb::transaction t(db_.begin());
-    // Make the first user an admin
-    user.IsAdmin = !db_.query_value<UserCount>().count;
-    db_.persist(user);
-    t.commit();
-  } catch (const odb::object_already_persistent&) {
+    auto users_count = 0;
+    db_ <<
+      "SELECT COUNT(*) FROM User" >>
+      users_count;
+    user.is_admin = !users_count;
+    CreateUser(user);
+  } catch (const sqlite::errors::constraint&) {
     // The username was registered after the first check
     return CollabVmServerMessage::RegisterAccountResponse::
         RegisterAccountError::USERNAME_TAKEN;
@@ -175,78 +225,219 @@ Database::CreateAccount(
       SUCCESS;
 }
 
-std::tuple<std::string, bool, SessionId, SessionId> Database::CreateSession(
-    const std::string& username,
-    const std::array<std::uint8_t, 16>& ip_address) {
-  const auto last_login =
-      std::chrono::duration_cast<std::chrono::seconds>(
-          std::chrono::steady_clock::now().time_since_epoch())
-          .count();
-  User user;
-  bool success;
+using User2=Database::User;
+using UserInvite2=Database::UserInvite;
+using SessionId2=Database::SessionId;
+
+std::optional<User2> Database::GetUser(const std::string& username)
+{
+  std::optional<User> optional_user;
+  db_ << "SELECT * FROM User WHERE Username = ?" << username
+    >> [&optional_user] (
+  std::uint32_t id,
+  const std::string& username,
+  const std::vector<std::byte>& password_hash,
+  const std::vector<std::byte>& password_salt,
+  const std::vector<std::byte>& totp_key,
+  const std::vector<std::byte>& session_id,
+  Timestamp registration_date,
+  const IpAddress& registration_ip_address,
+  const IpAddress& last_active_ip_address,
+  Timestamp last_login,
+  Timestamp last_failed_login,
+  Timestamp last_online,
+  std::uint32_t failed_logins,
+  bool is_admin,
+  bool is_disabled)
+  {
+    auto& user = optional_user.emplace();
+    user.id = id;
+    user.username = username;
+    user.password_hash = password_hash;
+    user.password_salt = password_salt;
+    user.totp_key = totp_key;
+    user.session_id = session_id;
+    user.registration_date = registration_date;
+    user.registration_ip_address = registration_ip_address;
+    user.last_active_ip_address = last_active_ip_address;
+    user.last_login = last_login;
+    user.last_failed_login = last_failed_login;
+    user.last_online = last_online;
+    user.failed_logins = failed_logins;
+    user.is_admin = is_admin;
+    user.is_disabled = is_disabled;
+  };
+  return optional_user;
+}
+
+void Database::UpdateUser(const User& user)
+{
+  db_ << "UPDATE User SET "
+    "  Id = ?,"
+    "  Username = ?,"
+    "  PasswordHash = ?,"
+    "  PasswordSalt = ?,"
+    "  TotpKey = ?,"
+    "  SessionId = ?,"
+    "  RegistrationDate = ?,"
+    "  RegistrationIpAddr = ?,"
+    "  LastActiveIpAddr = ?,"
+    "  LastLogin = ?,"
+    "  LastFailedLogin = ?,"
+    "  LastOnline = ?,"
+    "  FailedLogins = ?,"
+    "  IsAdmin = ?,"
+    "  IsDisabled = ?"
+    "  WHERE Id = ?"
+    << user.id
+    << user.username
+    << user.password_hash
+    << user.password_salt
+    << user.totp_key
+    << user.session_id
+    << user.registration_date
+    << user.registration_ip_address
+    << user.last_active_ip_address
+    << user.last_login
+    << user.last_failed_login
+    << user.last_online
+    << user.failed_logins
+    << user.is_admin
+    << user.is_disabled
+    << user.id;
+}
+
+void Database::CreateUser(User& user)
+{
+  db_ << "INSERT INTO User ("
+    "  Username,"
+    "  PasswordHash,"
+    "  PasswordSalt,"
+    "  TotpKey,"
+    "  SessionId,"
+    "  RegistrationDate,"
+    "  RegistrationIpAddr,"
+    "  LastActiveIpAddr,"
+    "  LastLogin,"
+    "  LastFailedLogin,"
+    "  LastOnline,"
+    "  FailedLogins,"
+    "  IsAdmin,"
+    "  IsDisabled)"
+    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    << user.username
+    << user.password_hash
+    << user.password_salt
+    << user.totp_key
+    << user.session_id
+    << user.registration_date
+    << user.registration_ip_address
+    << user.last_active_ip_address
+    << user.last_login
+    << user.last_failed_login
+    << user.last_online
+    << user.failed_logins
+    << user.is_admin
+    << user.is_disabled;
+  user.id = db_.last_insert_rowid();
+}
+
+Database::Timestamp Database::GetCurrentTimestamp()
+{
+  return std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+std::tuple<std::string, bool, SessionId2, SessionId2> Database::CreateSession(
+  const std::string& username,
+  const IpAddress& ip_address) {
+  const auto last_login = GetCurrentTimestamp();
+  auto user = std::optional<User>();
+  auto success = false;
   SessionId old_session_id;
   SessionId new_session_id;
   do {
     new_session_id = GenerateSessionId();
     try {
-      odb::transaction t(db_.begin());
-      if (!db_.query_one<User>(odb::query<User>::Username == username, user) ||
-          user.IsDisabled) {
+      user = GetUser(username);
+      if (!user || user->is_disabled) {
         return {};
       }
-      user.LastLogin = last_login;
-      user.LastActiveIpAddr = ip_address;
+      user->last_login = last_login;
+      user->last_active_ip_address = ip_address;
       old_session_id = new_session_id;
-      user.SessionId = std::vector<std::uint8_t>(new_session_id.cbegin(),
-                                                 new_session_id.cend());
-      db_.update(user);
-      t.commit();
+      user->session_id = new_session_id;
+      UpdateUser(user.value());
       success = true;
-    } catch (const odb::object_already_persistent&) {
+    } catch (const sqlite::errors::constraint&) {
       // Session ID already exists so generate another one and try again
       success = false;
     }
   } while (!success);
-  return {std::move(user.Username->Username), user.IsAdmin,
+  return {std::move(user->username), user->is_admin,
           std::move(old_session_id), std::move(new_session_id)};
 }
 
-std::pair<CollabVmServerMessage::LoginResponse::LoginResult,
-          std::vector<uint8_t>>
+std::pair<
+  CollabVmServerMessage::LoginResponse::LoginResult,
+  std::vector<std::byte>>
 Database::Login(const std::string& username, const std::string& password) {
-  User user;
-  {
-    odb::transaction t(db_.begin());
-    if (!db_.query_one<User>(odb::query<User>::Username == username, user)) {
-      return {
-          CollabVmServerMessage::LoginResponse::LoginResult::INVALID_USERNAME,
-          {}};
-    }
+  auto user = GetUser(username);
+  if (!user) {
+    return {
+        CollabVmServerMessage::LoginResponse::LoginResult::INVALID_USERNAME,
+        {}};
   }
-  if (user.IsDisabled) {
+  if (user->is_disabled) {
     return {CollabVmServerMessage::LoginResponse::LoginResult::ACCOUNT_DISABLED,
             {}};
   }
-  const auto hash = HashPassword(password, user.PasswordSalt_);
-  if (!std::equal(user.PasswordHash_.cbegin(), user.PasswordHash_.cend(),
+  const auto hash = HashPassword(password, user->password_salt);
+  if (!std::equal(user->password_hash.cbegin(), user->password_hash.cend(),
                   hash.cbegin())) {
     return {CollabVmServerMessage::LoginResponse::LoginResult::INVALID_PASSWORD,
             {}};
   }
-  if (!user.TotpKey.empty()) {
+  if (!user->totp_key.empty()) {
     return {
         CollabVmServerMessage::LoginResponse::LoginResult::TWO_FACTOR_REQUIRED,
-        std::move(user.TotpKey)};
+        std::move(user->totp_key)};
   }
   return {CollabVmServerMessage::LoginResponse::LoginResult::SUCCESS, {}};
 }
 
+bool Database::ChangePassword(const std::string& username,
+                    const std::string& old_password,
+                    const std::string& new_password)
+{
+  auto user = GetUser(username);
+  if (!user) {
+    return false;
+  }
+  const auto old_hash = HashPassword(old_password, user->password_salt);
+  if (!std::equal(user->password_hash.cbegin(), user->password_hash.cend(),
+                  old_hash.cbegin())) {
+    return false;
+  }
+  // TODO: Require TOTP for changing the password
+  /*
+  if (!user.TotpKey.empty()) {
+    return false;
+  }
+  */
+  user->password_hash = HashPassword(new_password, user->password_salt);
+  UpdateUser(user.value());
+  return true;
+}
+
 bool Database::CreateReservedUsername(const std::string& username) {
   try {
-    odb::transaction t(db_.begin());
-    db_.persist(UnavailableUsername(username));
-    t.commit();
-  } catch (const odb::object_already_persistent&) {
+    db_ <<
+      "INSERT INTO UnavailableUsername (Username)"
+      " VALUES (?)"
+      << username;
+  } catch (const sqlite::sqlite_exception&) {
     return false;
   }
   return true;
@@ -257,47 +448,46 @@ std::optional<Database::InviteId> Database::CreateInvite(
     const std::string& username,
     const bool username_already_reserved,
     const bool is_admin) {
-  auto username_ptr = std::make_unique<UnavailableUsername>(username);
-  try {
-    odb::transaction t(db_.begin());
-    db_.persist(*username_ptr);
-    t.commit();
-  } catch (const odb::object_already_persistent&) {
-    if (username_already_reserved) {
-      return {};
-    }
+  if (!CreateReservedUsername(username)
+      && username_already_reserved)
+  {
+    return {};
   }
 
   UserInvite invite;
-  invite.InviteName = invite_name;
-  invite.Username = std::move(username_ptr);
-  invite.IsAdmin = is_admin;
-  InviteId invite_id;
+  invite.name = invite_name;
+  invite.username = username;
+  invite.is_admin = is_admin;
   auto success = false;
   do {
-    invite_id = GenerateInviteId();
+    invite.id = GenerateInviteId();
     try {
-      odb::transaction t(db_.begin());
-      invite.Id = std::string(reinterpret_cast<const char*>(invite_id.data()),
-                              invite_id.size());
-      db_.persist(invite);
-      t.commit();
+      db_ <<
+        "INSERT INTO UserInvite ("
+        "  Id,"
+        "  Username,"
+        "  InviteName,"
+        "  IsAdmin)"
+        " VALUES (?, ?, ?, ?)"
+        << invite.id
+        << invite.username
+        << invite.name
+        << invite.is_admin;
       success = true;
-    } catch (const odb::object_already_persistent&) {
+    } catch (const sqlite::errors::constraint&) {
       // Session ID already exists so generate another one and try again
       success = false;
     }
   } while (!success);
 
-  return invite_id;
+  return invite.id;
 }
 
 bool Database::DeleteReservedUsername(const std::string& username) {
   try {
-    odb::transaction t(db_.begin());
-    db_.erase<UnavailableUsername>(username);
-    t.commit();
-  } catch (const odb::object_not_persistent&) {
+    db_ << "DELETE FROM UnavailableUsername WHERE Username = ?"
+      << username;
+  } catch (const sqlite::sqlite_exception&) {
     return false;
   }
   return true;
@@ -306,15 +496,15 @@ bool Database::DeleteReservedUsername(const std::string& username) {
 bool Database::UpdateInvite(const std::string& id,
                             const std::string& username,
                             const bool is_admin) {
-  UserInvite invite;
-  invite.Id = id;
-  invite.Username = std::make_unique<UnavailableUsername>(username);
-  invite.IsAdmin = is_admin;
   try {
-    odb::transaction t(db_.begin());
-    db_.update(invite);
-    t.commit();
-  } catch (const odb::object_not_persistent&) {
+    db_ <<
+      "UPDATE UserInvite"
+      "  SET Username = ?, IsAdmin = ?"
+      "  WHERE Id = ?"
+      << username
+      << is_admin
+      << id;
+  } catch (const sqlite::sqlite_exception&) {
     return false;
   }
   return true;
@@ -322,29 +512,13 @@ bool Database::UpdateInvite(const std::string& id,
 
 bool Database::DeleteInvite(const std::string& id) {
   try {
-    odb::transaction t(db_.begin());
-    db_.erase<UserInvite>(id);
-    t.commit();
-  } catch (const odb::object_not_persistent&) {
+    db_ <<
+      "DELETE FROM UserInvite WHERE Id = ?"
+      << id;
+  } catch (const sqlite::sqlite_exception&) {
     return false;
   }
   return true;
-}
-
-void Database::AddVm(std::shared_ptr<VmConfig>& vm) {
-  odb::transaction t(db_.begin());
-
-  db_.persist(*vm);
-
-  t.commit();
-}
-
-void Database::UpdateVm(std::shared_ptr<VmConfig>& vm) {
-  odb::transaction t(db_.begin());
-
-  db_.update(*vm);
-
-  t.commit();
 }
 
 }  // namespace CollabVm::Server
