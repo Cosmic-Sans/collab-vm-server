@@ -22,3 +22,133 @@
 	path = submodules/libvncserver
 	url = https://github.com/LibVNC/libvncserver.git
 	branch = master
+[submodule "submodules/beast"]
+	path = submodules/beast
+	url = https://github.com/boostorg/beast.git
+	branch = master
+[submodule "submodules/asio"]
+	path = submodules/asio
+	url = https://github.com/boostorg/asio.git
+[submodule "submodules/any"]
+	path = submodules/any
+	url = https://github.com/boostorg/any.git
+	branch = master
+[submodule "submodules/assert"]
+	path = submodules/assert
+	url = https://github.com/boostorg/assert.git
+	branch = master
+[submodule "submodules/bind"]
+	path = submodules/bind
+	url = https://github.com/boostorg/bind.git
+	branch = master
+[submodule "submodules/detail"]
+	path = submodules/detail
+	url = https://github.com/boostorg/detail.git
+	branch = master
+[submodule "submodules/foreach"]
+	path = submodules/foreach
+	url = https://github.com/boostorg/foreach.git
+	branch = master
+[submodule "submodules/format"]
+	path = submodules/format
+	url = https://github.com/boostorg/format.git
+	branch = master
+[submodule "submodules/iterator"]
+	path = submodules/iterator
+	url = https://github.com/boostorg/iterator.git
+	branch = master
+[submodule "submodules/mpl"]
+	path = submodules/mpl
+	url = https://github.com/boostorg/mpl.git
+	branch = master
+[submodule "submodules/multi_index"]
+	path = submodules/multi_index
+	url = https://github.com/boostorg/multi_index.git
+	branch = master
+[submodule "submodules/optional"]
+	path = submodules/optional
+	url = https://github.com/boostorg/optional.git
+	branch = master
+[submodule "submodules/property_tree"]
+	path = submodules/property_tree
+	url = https://github.com/boostorg/property_tree.git
+	branch = master
+[submodule "submodules/range"]
+	path = submodules/range
+	url = https://github.com/boostorg/range.git
+	branch = master
+[submodule "submodules/serialization"]
+	path = submodules/serialization
+	url = https://github.com/boostorg/serialization.git
+	branch = master
+[submodule "submodules/spirit"]
+	path = submodules/spirit
+	url = https://github.com/boostorg/spirit.git
+	branch = master
+[submodule "submodules/static_assert"]
+	path = submodules/static_assert
+	url = https://github.com/boostorg/static_assert.git
+	branch = master
+[submodule "submodules/test"]
+	path = submodules/test
+	url = https://github.com/boostorg/test.git
+	branch = master
+[submodule "submodules/throw_exception"]
+	path = submodules/throw_exception
+	url = https://github.com/boostorg/throw_exception.git
+	branch = master
+[submodule "submodules/type_traits"]
+	path = submodules/type_traits
+	url = https://github.com/boostorg/type_traits.git
+	branch = master
+[submodule "submodules/utility"]
+	path = submodules/utility
+	url = https://github.com/boostorg/utility.git
+	branch = master
+[submodule "submodules/sqlite_modern_cpp"]
+	path = submodules/sqlite_modern_cpp
+	url = https://github.com/SqliteModernCpp/sqlite_modern_cpp.git
+[submodule "submodules/container_hash"]
+	path = submodules/container_hash
+	url = https://github.com/boostorg/container_hash.git
+	branch = master
+[submodule "submodules/core"]
+	path = submodules/core
+	url = https://github.com/boostorg/core.git
+	branch = master
+[submodule "submodules/intrusive"]
+	path = submodules/intrusive
+	url = https://github.com/boostorg/intrusive.git
+	branch = master
+[submodule "submodules/logic"]
+	path = submodules/logic
+	url = https://github.com/boostorg/logic.git
+	branch = master
+[submodule "submodules/move"]
+	path = submodules/move
+	url = https://github.com/boostorg/move.git
+	branch = master
+[submodule "submodules/mp11"]
+	path = submodules/mp11
+	url = https://github.com/boostorg/mp11.git
+	branch = master
+[submodule "submodules/predef"]
+	path = submodules/predef
+	url = https://github.com/boostorg/predef.git
+	branch = master
+[submodule "submodules/preprocessor"]
+	path = submodules/preprocessor
+	url = https://github.com/boostorg/preprocessor.git
+	branch = master
+[submodule "submodules/smart_ptr"]
+	path = submodules/smart_ptr
+	url = https://github.com/boostorg/smart_ptr.git
+	branch = master
+[submodule "submodules/system"]
+	path = submodules/system
+	url = https://github.com/boostorg/system.git
+	branch = master
+[submodule "submodules/config"]
+	path = submodules/config
+	url = https://github.com/boostorg/config.git
+	branch = master

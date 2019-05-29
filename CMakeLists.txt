@@ -1,5 +1,42 @@
 cmake_minimum_required(VERSION 3.7)
 
+set(HEADER_ONLY_INCLUDE_DIRS "")
+foreach(header_only_library IN ITEMS
+  any
+  asio
+  assert
+  beast
+  bind
+  config
+  detail
+  foreach
+  format
+  GSL
+  iterator
+  libvncserver
+  mpl
+  multi_index
+  optional
+  property_tree
+  range
+  serialization
+  spirit
+  static_assert
+  test
+  throw_exception
+  type_traits
+  utility)
+    message(status "header_only_library: ${header_only_library}")
+    list(APPEND HEADER_ONLY_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/${header_only_library}/include")
+  endforeach()
+
+find_path(sqlite-modern-cpp_INCLUDE_DIR
+          NAMES sqlite_modern_cpp.h
+          PATH "${CMAKE_SOURCE_DIR}/submodules/sqlite_modern_cpp/hdr/")
+
+#message(FATAL_ERROR "HEADER_ONLY_INCLUDE_DIRS ${HEADER_ONLY_INCLUDE_DIRS}") 
+message(STATUS "sqlite-modern-cpp_INCLUDE_DIR: ${sqlite-modern-cpp_INCLUDE_DIR}")
+
 if (BUILD_SHARED_LIBS)
   message(FATAL_ERROR "Building shared versions"
           " of FreeRDP, libvncserver, or Cap'N Proto is not supported")
@@ -42,20 +79,20 @@ if (NOT WIN32)
     WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 endif()
 # Configure FreeRDP
-execute_process(
-  COMMAND ${CMAKE_COMMAND}
-    -G ${CMAKE_GENERATOR} ${CL_ARGS}
-    -DCMAKE_INSTALL_PREFIX:PATH=${FREERDP_INSTALL_DIR}
-    -DBUILD_SHARED_LIBS:BOOL=OFF
-    ${CMAKE_SOURCE_DIR}/submodules/FreeRDP
-  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
-# Build FreeRDP
-execute_process(
-  COMMAND ${CMAKE_COMMAND}
-    --build ${FREERDP_BINARY_DIR}
-    --config ${CMAKE_BUILD_TYPE}
-    --target install
-  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
+#execute_process(
+#  COMMAND ${CMAKE_COMMAND}
+#    -G ${CMAKE_GENERATOR} ${CL_ARGS}
+#    -DCMAKE_INSTALL_PREFIX:PATH=${FREERDP_INSTALL_DIR}
+#    -DBUILD_SHARED_LIBS:BOOL=OFF
+#    ${CMAKE_SOURCE_DIR}/submodules/FreeRDP
+#  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
+## Build FreeRDP
+#execute_process(
+#  COMMAND ${CMAKE_COMMAND}
+#    --build ${FREERDP_BINARY_DIR}
+#    --config ${CMAKE_BUILD_TYPE}
+#    --target install
+#  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 # Patch header for static linking
 file(READ "${FREERDP_INSTALL_DIR}/include/freerdp2/freerdp/api.h" FREERDP_API_HEADER)
 string(REPLACE
@@ -104,10 +141,6 @@ find_package(OpenSSL REQUIRED)
 
 find_package(SQLite3 CONFIG REQUIRED)
 
-find_path(sqlite-modern-cpp_INCLUDE_DIR
-          NAMES sqlite_modern_cpp.h
-          PATH_SUFFIXES sqlite_modern_cpp sqlite-modern-cpp)
-
 #set(BUILD_TESTING OFF)
 #set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
 #set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
@@ -120,18 +153,11 @@ find_path(sqlite-modern-cpp_INCLUDE_DIR
 add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
-add_compile_definitions(BOOST_ALL_NO_LIB)
-find_package(Boost 1.69 REQUIRED COMPONENTS filesystem program_options system thread)
-add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
-include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-
-link_directories(${Boost_LIBRARY_DIR})
-
 add_definitions("-DPROJECT_VERSION=${PROJECT_VERSION}")
 add_definitions(-DHAS_STD_BYTE -DBOOST_ASIO_HAS_MOVE -DBOOST_ASIO_HAS_STD_ATOMIC -DBOOST_ASIO_HAS_VARIADIC_TEMPLATES -DBOOST_ASIO_HAS_STD_CHRONO)
 # TODO: Enable this when Boost.Process
 # no longer uses deprecated Asio functions
-#add_definitions(-DBOOST_ASIO_NO_DEPRECATED)
+add_definitions(-DBOOST_ASIO_NO_DEPRECATED)
 if(MSVC)
   add_definitions(-D_WIN32_WINNT=0x0501 -D_HAS_AUTO_PTR_ETC=1)
 endif()
@@ -264,15 +290,16 @@ target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
 	${FreeRDP_INCLUDE_DIR}
 	${LIBVNCSERVER_INCLUDE_DIRS}
   ${Cairo_INCLUDE_DIR}
+  ${HEADER_ONLY_INCLUDE_DIRS}
 	${COLLAB_VM_COMMON}
   ${OPENSSL_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}/submodules/GSL/include
-  ${Boost_INCLUDE_DIRS}
+  ${HEADER_ONLY_INCLUDE_DIRS}
   ${SQLITE3_INCLUDE_DIR}
   ${sqlite-modern-cpp_INCLUDE_DIR}
   ${ARGON2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE
-  argon2 ${Boost_LIBRARIES} CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common
+  argon2 CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common
 	guacamole OpenSSL::Crypto OpenSSL::SSL sqlite3)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)
