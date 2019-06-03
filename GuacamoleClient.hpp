@@ -333,11 +333,11 @@ private:
     const std::unordered_map<std::string_view, std::string_view>& args_map,
     const char** arg_names)
   {
-    const auto args_end =
-      std::find(arg_names,
-        reinterpret_cast<const char**>(std::numeric_limits<std::size_t>::max()),
-        nullptr);
-    const auto args_count = std::distance(arg_names, args_end);
+    auto args_count = 0u;
+    while (arg_names[args_count])
+    {
+      args_count++;
+    }
     if (args_map.empty())
     {
       return std::vector<const char*>(args_count, "");
