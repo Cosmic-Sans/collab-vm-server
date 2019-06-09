@@ -1722,7 +1722,7 @@ namespace CollabVm::Server
           users_.begin(),
           users_.end(),
           [callback=std::forward<TCallback>(callback)]
-          (auto& user) {
+          (auto& user) mutable {
             callback(user.second, *user.first);
           });
       }
@@ -1864,8 +1864,9 @@ namespace CollabVm::Server
           .initMessage()
           .*init)();
         user_list.setChannel(GetId());
-        auto users_it = user_list.initUsers(users_.size()).begin();
-        ForEachUser([this, &users_it](auto& user_data, auto&)
+        auto users = user_list.initUsers(users_.size());
+        ForEachUser(
+          [this, users_it = users.begin()](auto& user_data, auto&) mutable
           {
             AddUserToList(user_data, *users_it++);
           });
