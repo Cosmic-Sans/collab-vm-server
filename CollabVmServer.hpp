@@ -2,10 +2,7 @@
 #include <algorithm>
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
-#include <boost/filesystem.hpp>
 #include <boost/functional/hash.hpp>
-#include <boost/process.hpp>
-#include <boost/range/adaptors.hpp>
 #include <gsl/span>
 #include <memory>
 #include <string_view>
@@ -67,7 +64,7 @@ namespace CollabVm::Server
       };
 
       CollabVmSocket(boost::asio::io_context& io_context,
-                     const boost::filesystem::path& doc_root,
+                     const std::filesystem::path& doc_root,
                      CollabVmServer& server)
         : TSocket(io_context, doc_root),
           server_(server),
@@ -1161,9 +1158,11 @@ namespace CollabVm::Server
                 settings.GetServerSetting(ServerSetting::Setting::BAN_IP_COMMAND)
                         .getBanIpCommand();
               if (ban_ip_command.size()) {
+                /*
                 boost::process::spawn(
                   ban_ip_command.cStr(),
                   boost::process::env["IP_ADDRESS"] = ip_address);
+                  */
               }
             });
           break;
@@ -1598,7 +1597,7 @@ namespace CollabVm::Server
   protected:
     std::shared_ptr<typename TServer::TSocket> CreateSocket(
       boost::asio::io_context& io_context,
-      const boost::filesystem::path& doc_root) override
+      const std::filesystem::path& doc_root) override
     {
       return std::make_shared<CollabVmSocket<typename TServer::TSocket>>(
         io_context, doc_root, *this);
@@ -2224,7 +2223,7 @@ namespace CollabVm::Server
           if (const auto start_command =
                 state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
               start_command.size()) {
-            boost::process::spawn(start_command.cStr());
+            //boost::process::spawn(start_command.cStr());
           }
 
           state.active_ = true;
@@ -2255,7 +2254,7 @@ namespace CollabVm::Server
           if (const auto stop_command =
                 state.GetSetting(VmSetting::Setting::STOP_COMMAND).getStopCommand();
               stop_command.size()) {
-            boost::process::spawn(stop_command.cStr());
+            //boost::process::spawn(stop_command.cStr());
           }
 
           state.active_ = false;
@@ -2274,7 +2273,7 @@ namespace CollabVm::Server
           if (const auto restart_command =
                 state.GetSetting(VmSetting::Setting::RESTART_COMMAND).getRestartCommand();
               restart_command.size()) {
-            boost::process::spawn(restart_command.cStr());
+            //boost::process::spawn(restart_command.cStr());
           }
 
           state.active_ = true;

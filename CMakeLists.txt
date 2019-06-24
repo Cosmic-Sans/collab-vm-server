@@ -1,41 +1,66 @@
 cmake_minimum_required(VERSION 3.7)
 
-set(HEADER_ONLY_INCLUDE_DIRS "")
-foreach(header_only_library IN ITEMS
+set(Boost_INCLUDE_DIRS "")
+foreach(boost_library IN ITEMS
+  algorithm
+  align
   any
+  array
   asio
   assert
   beast
   bind
+  concept_check
   config
+  container
+  container_hash
+  core
   detail
+  endian
   foreach
   format
-  GSL
+  function
+  functional
+  fusion
+  integer
+  intrusive
+  io
   iterator
-  libvncserver
+  logic
+  math
+  move
+  mp11
   mpl
   multi_index
+  numeric_conversion
   optional
+  predef
+  preprocessor
   property_tree
   range
   serialization
+  smart_ptr
   spirit
   static_assert
+  system
   test
   throw_exception
+  tuple
+  type_index
   type_traits
-  utility)
-    message(status "header_only_library: ${header_only_library}")
-    list(APPEND HEADER_ONLY_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/${header_only_library}/include")
+  utility
+  winapi
+  )
+    list(APPEND Boost_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/${boost_library}/include")
   endforeach()
 
 find_path(sqlite-modern-cpp_INCLUDE_DIR
-          NAMES sqlite_modern_cpp.h
-          PATH "${CMAKE_SOURCE_DIR}/submodules/sqlite_modern_cpp/hdr/")
+          sqlite_modern_cpp.h
+          PATHS "${CMAKE_SOURCE_DIR}/submodules/sqlite_modern_cpp/hdr/")
 
-#message(FATAL_ERROR "HEADER_ONLY_INCLUDE_DIRS ${HEADER_ONLY_INCLUDE_DIRS}") 
-message(STATUS "sqlite-modern-cpp_INCLUDE_DIR: ${sqlite-modern-cpp_INCLUDE_DIR}")
+find_path(clipp_INCLUDE_DIR
+          clipp.h
+          PATHS "${CMAKE_SOURCE_DIR}/submodules/clipp/include/")
 
 if (BUILD_SHARED_LIBS)
   message(FATAL_ERROR "Building shared versions"
@@ -79,20 +104,20 @@ if (NOT WIN32)
     WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 endif()
 # Configure FreeRDP
-#execute_process(
-#  COMMAND ${CMAKE_COMMAND}
-#    -G ${CMAKE_GENERATOR} ${CL_ARGS}
-#    -DCMAKE_INSTALL_PREFIX:PATH=${FREERDP_INSTALL_DIR}
-#    -DBUILD_SHARED_LIBS:BOOL=OFF
-#    ${CMAKE_SOURCE_DIR}/submodules/FreeRDP
-#  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
-## Build FreeRDP
-#execute_process(
-#  COMMAND ${CMAKE_COMMAND}
-#    --build ${FREERDP_BINARY_DIR}
-#    --config ${CMAKE_BUILD_TYPE}
-#    --target install
-#  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
+execute_process(
+  COMMAND ${CMAKE_COMMAND}
+    -G ${CMAKE_GENERATOR} ${CL_ARGS}
+    -DCMAKE_INSTALL_PREFIX:PATH=${FREERDP_INSTALL_DIR}
+    -DBUILD_SHARED_LIBS:BOOL=OFF
+    ${CMAKE_SOURCE_DIR}/submodules/FreeRDP
+  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
+# Build FreeRDP
+execute_process(
+  COMMAND ${CMAKE_COMMAND}
+    --build ${FREERDP_BINARY_DIR}
+    --config ${CMAKE_BUILD_TYPE}
+    --target install
+  WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 # Patch header for static linking
 file(READ "${FREERDP_INSTALL_DIR}/include/freerdp2/freerdp/api.h" FREERDP_API_HEADER)
 string(REPLACE
@@ -154,12 +179,29 @@ add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
 add_definitions("-DPROJECT_VERSION=${PROJECT_VERSION}")
-add_definitions(-DHAS_STD_BYTE -DBOOST_ASIO_HAS_MOVE -DBOOST_ASIO_HAS_STD_ATOMIC -DBOOST_ASIO_HAS_VARIADIC_TEMPLATES -DBOOST_ASIO_HAS_STD_CHRONO)
-# TODO: Enable this when Boost.Process
-# no longer uses deprecated Asio functions
-add_definitions(-DBOOST_ASIO_NO_DEPRECATED)
+add_definitions(
+  # Prevent Boost from trying to link
+  -DBOOST_ALL_NO_LIB
+  # Boost Asio options
+  -DBOOST_ASIO_HAS_MOVE
+  -DBOOST_ASIO_HAS_STD_ATOMIC
+  -DBOOST_ASIO_HAS_VARIADIC_TEMPLATES
+  -DBOOST_ASIO_HAS_STD_CHRONO
+  -DBOOST_ASIO_DISABLE_BOOST_ARRAY
+  -DBOOST_ASIO_DISABLE_BOOST_ASSERT
+  -DBOOST_ASIO_DISABLE_BOOST_BIND
+  -DBOOST_ASIO_DISABLE_BOOST_CHRONO
+  -DBOOST_ASIO_DISABLE_BOOST_DATE_TIME
+  -DBOOST_ASIO_DISABLE_BOOST_LIMITS
+  -DBOOST_ASIO_DISABLE_BOOST_REGEX
+  -DBOOST_ASIO_DISABLE_BOOST_STATIC_CONSTANT
+  -DBOOST_ASIO_DISABLE_BOOST_THROW_EXCEPTION
+  -DBOOST_ASIO_DISABLE_BOOST_WORKAROUND
+  -DBOOST_ASIO_NO_DEPRECATED)
+
+# Why is this necessary?
 if(MSVC)
-  add_definitions(-D_WIN32_WINNT=0x0501 -D_HAS_AUTO_PTR_ETC=1)
+  add_definitions(-D_WIN32_WINNT=0x0501)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -172,31 +214,8 @@ endif()
 
 find_package(PNG REQUIRED)
 
-find_package(unofficial-cairo CONFIG QUIET)
-if (TARGET unofficial::cairo::cairo)
-  set(Cairo_INCLUDE_DIR "")
-  set(Cairo_LIBRARY unofficial::cairo::cairo unofficial::cairo::cairo-gobject)
-else()
-  find_path(Cairo_INCLUDE_DIR cairo.h PATH_SUFFIXES cairo)
-  find_library(Cairo_LIBRARY NAMES
-    ${CMAKE_STATIC_LIBRARY_PREFIX}cairo${CMAKE_STATIC_LIBRARY_SUFFIX} cairo)
-  if (${Cairo_LIBRARY} MATCHES ".*${CMAKE_STATIC_LIBRARY_SUFFIX}$")
-    # TODO: Don't hardcore Cairo's dependencies
-    find_library(pixman_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}pixman${CMAKE_STATIC_LIBRARY_SUFFIX}
-      ${CMAKE_STATIC_LIBRARY_PREFIX}pixman-1${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(fontconfig_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}fontconfig${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(expat_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}expat${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(freetype_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}freetype${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(bz2_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}bz2${CMAKE_STATIC_LIBRARY_SUFFIX})
-    set(Cairo_LIBRARY ${Cairo_LIBRARY} ${pixman_LIBRARY} ${fontconfig_LIBRARY}
-      ${expat_LIBRARY} ${freetype_LIBRARY} ${bz2_LIBRARY})
-  endif()
-endif()
+find_package(unofficial-cairo CONFIG)
+set(Cairo_LIBRARY unofficial::cairo::cairo)
 
 include(ExternalProject)
 set(LIBVNCSERVER_CMAKE_CACHE_ARGS ${CL_ARGS})
@@ -275,7 +294,7 @@ target_link_libraries(guacamole PRIVATE ${Cairo_LIBRARY} CapnProto::capnp collab
 add_dependencies(guacamole freerdp libvncserver)
 set(GUACAMOLE_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/common" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac/guacamole" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src" ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp ${COLLAB_VM_COMMON_BINARY_DIR})
 target_compile_definitions(guacamole PRIVATE -DENABLE_WINPR)
-target_include_directories(guacamole PUBLIC ${Cairo_INCLUDE_DIR} ${GUACAMOLE_INCLUDE_DIRS} ${FreeRDP_INCLUDE_DIR} ${FreeRDP-Client_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
+target_include_directories(guacamole PUBLIC ${GUACAMOLE_INCLUDE_DIRS} ${FreeRDP_INCLUDE_DIR} ${FreeRDP-Client_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
 if (MSVC)
   find_package(pthreads REQUIRED)
   if (TARGET PThreads4W::PThreads4W)
@@ -289,14 +308,13 @@ endif()
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
 	${FreeRDP_INCLUDE_DIR}
 	${LIBVNCSERVER_INCLUDE_DIRS}
-  ${Cairo_INCLUDE_DIR}
-  ${HEADER_ONLY_INCLUDE_DIRS}
 	${COLLAB_VM_COMMON}
   ${OPENSSL_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}/submodules/GSL/include
-  ${HEADER_ONLY_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIRS}
   ${SQLITE3_INCLUDE_DIR}
   ${sqlite-modern-cpp_INCLUDE_DIR}
+  ${clipp_INCLUDE_DIR}
   ${ARGON2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE
   argon2 CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common

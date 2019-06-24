@@ -152,3 +152,67 @@
 	path = submodules/config
 	url = https://github.com/boostorg/config.git
 	branch = master
+[submodule "submodules/integer"]
+	path = submodules/integer
+	url = https://github.com/boostorg/integer.git
+	branch = master
+[submodule "submodules/winapi"]
+	path = submodules/winapi
+	url = https://github.com/boostorg/winapi.git
+	branch = master
+[submodule "submodules/type_index"]
+	path = submodules/type_index
+	url = https://github.com/boostorg/type_index.git
+	branch = master
+[submodule "submodules/function"]
+	path = submodules/function
+	url = https://github.com/boostorg/function.git
+	branch = master
+[submodule "submodules/concept_check"]
+	path = submodules/concept_check
+	url = https://github.com/boostorg/concept_check.git
+	branch = master
+[submodule "submodules/numeric_conversion"]
+	path = submodules/numeric_conversion
+	url = https://github.com/boostorg/numeric_conversion.git
+	branch = master
+[submodule "submodules/array"]
+	path = submodules/array
+	url = https://github.com/boostorg/array.git
+	branch = master
+[submodule "submodules/container"]
+	path = submodules/container
+	url = https://github.com/boostorg/container.git
+	branch = master
+[submodule "submodules/align"]
+	path = submodules/align
+	url = https://github.com/boostorg/align.git
+	branch = master
+[submodule "submodules/endian"]
+	path = submodules/endian
+	url = https://github.com/boostorg/endian.git
+	branch = master
+[submodule "submodules/io"]
+	path = submodules/io
+	url = https://github.com/boostorg/io.git
+	branch = master
+[submodule "submodules/functional"]
+	path = submodules/functional
+	url = https://github.com/boostorg/functional.git
+	branch = master
+[submodule "submodules/algorithm"]
+	path = submodules/algorithm
+	url = https://github.com/boostorg/algorithm.git
+	branch = master
+[submodule "submodules/fusion"]
+	path = submodules/fusion
+	url = https://github.com/boostorg/fusion.git
+	branch = master
+[submodule "submodules/tuple"]
+	path = submodules/tuple
+	url = https://github.com/boostorg/tuple.git
+	branch = master
+[submodule "submodules/clipp"]
+	path = submodules/clipp
+	url = https://github.com/muellan/clipp.git
+	branch = master

@@ -4,7 +4,8 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
-#include <boost/filesystem.hpp>
+//#include <boost/filesystem.hpp>
+#include <filesystem>
 #include <cassert>
 #include <functional>
 #include <memory>
@@ -26,7 +27,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                             WebServerSocket<TServer, TThreadPool>> {
  public:
   WebServerSocket(asio::io_context& io_context,
-                  const boost::filesystem::path& doc_root)
+                  const std::filesystem::path& doc_root)
       : socket_(io_context, io_context),
         request_deadline_(io_context,
                           std::chrono::steady_clock::time_point::max()),
@@ -130,15 +131,18 @@ class WebServerSocket : public std::enable_shared_from_this<
               }
 
               // Serve static content from doc root
-              boost::filesystem::path path(
+              std::filesystem::path path(
                   request.target().substr(1).to_string());
               // Disallow relative paths
               if (std::none_of(path.begin(), path.end(), [](const auto& e) {
                     return e == ".." || e == ".";
                   })) {
-                auto err = boost::system::error_code();
-                path = boost::filesystem::canonical(path, doc_root_, err);
+                    {
+                auto err = std::error_code();
+                path = std::filesystem::canonical(doc_root_ / path, err);
+                    }
 
+                auto err = boost::system::error_code();
                 // Verify that the path exists and is within the doc root
                 if (!err && path.compare(doc_root_) >= 0 &&
                     std::equal(doc_root_.begin(), doc_root_.end(),
@@ -485,7 +489,7 @@ class WebServerSocket : public std::enable_shared_from_this<
   //  beast::websocket::stream<asio::ip::tcp::socket&>>::SharedStrandGuard
   //  websocket_;
 
-  const boost::filesystem::path& doc_root_;
+  const std::filesystem::path& doc_root_;
   IpAddress ip_address_;
 
   std::function<void()> close_callback_;
@@ -584,16 +588,19 @@ class WebServer : public TThreadPool {
 
   void Start(const std::string& host,
              const std::uint16_t port) {
-    auto ec = boost::system::error_code();
+               {
+    auto ec = std::error_code();
     CreateDocRoot(doc_root_, ec);
     if (ec) {
       return;
     }
+               }
 
     interrupt_signal_.async_wait([this](const auto error,
                                         const auto signal_number) { Stop(); });
 
     auto resolver = asio::ip::tcp::resolver(TThreadPool::io_context_);
+    auto ec = boost::system::error_code();
     auto it = resolver.resolve(host, std::to_string(port), ec);
     if (ec) {
       std::cout << "Could not resolve hostname \"" << host << '"' << std::endl;
@@ -636,15 +643,15 @@ class WebServer : public TThreadPool {
 
   virtual std::shared_ptr<TSocket> CreateSocket(
       boost::asio::io_context& io_context,
-      const boost::filesystem::path& doc_root) = 0;
+      const std::filesystem::path& doc_root) = 0;
 
  private:
-  static void CreateDocRoot(boost::filesystem::path& path,
-                            boost::system::error_code& ec) {
-    auto status = boost::filesystem::status(path, ec);
+  static void CreateDocRoot(std::filesystem::path& path,
+                            std::error_code& ec) {
+    auto status = std::filesystem::status(path, ec);
     if (ec) {
-      if (status.type() == boost::filesystem::file_type::file_not_found) {
-        if (boost::filesystem::create_directories(path, ec)) {
+      if (status.type() == std::filesystem::file_type::not_found) {
+        if (std::filesystem::create_directories(path, ec)) {
           std::cout << "The path " << path << " has been created" << std::endl;
         } else {
           std::cout << "Failed to create directory " << path << std::endl;
@@ -654,15 +661,14 @@ class WebServer : public TThreadPool {
         std::cout << ec.category().message(ec.value()) << std::endl;
         return;
       }
-    } else if (status.type() != boost::filesystem::file_type::directory_file) {
+    } else if (status.type() != std::filesystem::file_type::directory) {
       std::cout << "The doc root should be a directory, but it's a file"
                 << std::endl;
-      ec = boost::system::errc::make_error_code(
-          boost::system::errc::no_such_file_or_directory);
+      ec = std::make_error_code(std::errc::no_such_file_or_directory);
       return;
     }
 
-    path = boost::filesystem::canonical(path, ec);
+    path = std::filesystem::canonical(path, ec);
     if (ec) {
       std::cout << ec.category().message(ec.value()) << std::endl;
     }
@@ -709,7 +715,7 @@ class WebServer : public TThreadPool {
     std::list<std::shared_ptr<TSocket>>> sockets_;
 
   boost::asio::ip::tcp::acceptor acceptor_;
-  boost::filesystem::path doc_root_;
+  std::filesystem::path doc_root_;
   boost::asio::signal_set interrupt_signal_;
 };
 }  // namespace CollabVm::Server

@@ -22,7 +22,7 @@ extern "C" {
 
 #include <atomic>
 #include <boost/asio.hpp>
-#include <boost/thread.hpp>
+//#include <boost/thread.hpp>
 #include <cairo.h>
 #include <capnp/message.h>
 #include <functional>
@@ -251,6 +251,7 @@ private:
       // when it exits it is safe to deallocate the guac_client
       auto& guacamole_client =
         *static_cast<GuacamoleClient*>(socket->data);
+      /*
       boost::this_thread::at_thread_exit([&guacamole_client]
       {
         // The stop callback is posted to an io_context thread
@@ -262,6 +263,7 @@ private:
             static_cast<TCallbacks&>(guacamole_client).OnStop();
           });
       });
+      */
       socket->write_handler = [](auto* socket, auto* data)
       {
         auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
