@@ -22,3 +22,190 @@
 	path = submodules/libvncserver
 	url = https://github.com/LibVNC/libvncserver.git
 	branch = master
+[submodule "submodules/sqlite_modern_cpp"]
+	path = submodules/sqlite_modern_cpp
+	url = https://github.com/SqliteModernCpp/sqlite_modern_cpp.git
+[submodule "submodules/clipp"]
+	path = submodules/clipp
+	url = https://github.com/muellan/clipp.git
+	branch = master
+[submodule "submodules/boost-algorithm"]
+	path = submodules/boost-algorithm
+	url = https://github.com/boostorg/algorithm.git
+	branch = master
+[submodule "submodules/boost-align"]
+	path = submodules/boost-align
+	url = https://github.com/boostorg/align.git
+	branch = master
+[submodule "submodules/boost-any"]
+	path = submodules/boost-any
+	url = https://github.com/boostorg/any.git
+	branch = master
+[submodule "submodules/boost-array"]
+	path = submodules/boost-array
+	url = https://github.com/boostorg/array.git
+	branch = master
+[submodule "submodules/boost-asio"]
+	path = submodules/boost-asio
+	url = https://github.com/boostorg/asio.git
+	branch = master
+[submodule "submodules/boost-assert"]
+	path = submodules/boost-assert
+	url = https://github.com/boostorg/assert.git
+	branch = master
+[submodule "submodules/boost-beast"]
+	path = submodules/boost-beast
+	url = https://github.com/boostorg/beast.git
+	branch = master
+[submodule "submodules/boost-bind"]
+	path = submodules/boost-bind
+	url = https://github.com/boostorg/bind.git
+	branch = master
+[submodule "submodules/boost-concept_check"]
+	path = submodules/boost-concept_check
+	url = https://github.com/boostorg/concept_check.git
+	branch = master
+[submodule "submodules/boost-config"]
+	path = submodules/boost-config
+	url = https://github.com/boostorg/config.git
+	branch = master
+[submodule "submodules/boost-container"]
+	path = submodules/boost-container
+	url = https://github.com/boostorg/container.git
+	branch = master
+[submodule "submodules/boost-core"]
+	path = submodules/boost-core
+	url = https://github.com/boostorg/core.git
+	branch = master
+[submodule "submodules/boost-detail"]
+	path = submodules/boost-detail
+	url = https://github.com/boostorg/detail.git
+	branch = master
+[submodule "submodules/boost-endian"]
+	path = submodules/boost-endian
+	url = https://github.com/boostorg/endian.git
+	branch = master
+[submodule "submodules/boost-foreach"]
+	path = submodules/boost-foreach
+	url = https://github.com/boostorg/foreach.git
+	branch = master
+[submodule "submodules/boost-format"]
+	path = submodules/boost-format
+	url = https://github.com/boostorg/format.git
+	branch = master
+[submodule "submodules/boost-function"]
+	path = submodules/boost-function
+	url = https://github.com/boostorg/function.git
+	branch = master
+[submodule "submodules/boost-functional"]
+	path = submodules/boost-functional
+	url = https://github.com/boostorg/functional.git
+	branch = master
+[submodule "submodules/boost-integer"]
+	path = submodules/boost-integer
+	url = https://github.com/boostorg/integer.git
+	branch = master
+[submodule "submodules/boost-intrusive"]
+	path = submodules/boost-intrusive
+	url = https://github.com/boostorg/intrusive.git
+	branch = master
+[submodule "submodules/boost-io"]
+	path = submodules/boost-io
+	url = https://github.com/boostorg/io.git
+	branch = master
+[submodule "submodules/boost-iterator"]
+	path = submodules/boost-iterator
+	url = https://github.com/boostorg/iterator.git
+	branch = master
+[submodule "submodules/boost-logic"]
+	path = submodules/boost-logic
+	url = https://github.com/boostorg/logic.git
+	branch = master
+[submodule "submodules/boost-move"]
+	path = submodules/boost-move
+	url = https://github.com/boostorg/move.git
+	branch = master
+[submodule "submodules/boost-mp11"]
+	path = submodules/boost-mp11
+	url = https://github.com/boostorg/mp11.git
+	branch = master
+[submodule "submodules/boost-mpl"]
+	path = submodules/boost-mpl
+	url = https://github.com/boostorg/mpl.git
+	branch = master
+[submodule "submodules/boost-system"]
+	path = submodules/boost-system
+	url = https://github.com/boostorg/system.git
+	branch = master
+[submodule "submodules/boost-tuple"]
+	path = submodules/boost-tuple
+	url = https://github.com/boostorg/tuple.git
+	branch = master
+[submodule "submodules/boost-utility"]
+	path = submodules/boost-utility
+	url = https://github.com/boostorg/utility.git
+	branch = master
+[submodule "submodules/boost-winapi"]
+	path = submodules/boost-winapi
+	url = https://github.com/boostorg/winapi.git
+	branch = master
+[submodule "submodules/boost-optional"]
+	path = submodules/boost-optional
+	url = https://github.com/boostorg/optional.git
+	branch = master
+[submodule "submodules/boost-predef"]
+	path = submodules/boost-predef
+	url = https://github.com/boostorg/predef.git
+	branch = master
+[submodule "submodules/boost-preprocessor"]
+	path = submodules/boost-preprocessor
+	url = https://github.com/boostorg/preprocessor.git
+	branch = master
+[submodule "submodules/boost-range"]
+	path = submodules/boost-range
+	url = https://github.com/boostorg/range.git
+	branch = master
+[submodule "submodules/boost-serialization"]
+	path = submodules/boost-serialization
+	url = https://github.com/boostorg/serialization.git
+	branch = master
+[submodule "submodules/boost-test"]
+	path = submodules/boost-test
+	url = https://github.com/boostorg/test.git
+	branch = master
+[submodule "submodules/boost-smart_ptr"]
+	path = submodules/boost-smart_ptr
+	url = https://github.com/boostorg/smart_ptr.git
+	branch = master
+[submodule "submodules/boost-static_assert"]
+	path = submodules/boost-static_assert
+	url = https://github.com/boostorg/static_assert.git
+	branch = master
+[submodule "submodules/boost-throw_exception"]
+	path = submodules/boost-throw_exception
+	url = https://github.com/boostorg/throw_exception.git
+	branch = master
+[submodule "submodules/boost-numeric_conversion"]
+	path = submodules/boost-numeric_conversion
+	url = https://github.com/boostorg/numeric_conversion.git
+	branch = master
+[submodule "submodules/boost-multi_index"]
+	path = submodules/boost-multi_index
+	url = https://github.com/boostorg/multi_index.git
+	branch = master
+[submodule "submodules/boost-container_hash"]
+	path = submodules/boost-container_hash
+	url = https://github.com/boostorg/container_hash.git
+	branch = master
+[submodule "submodules/boost-property_tree"]
+	path = submodules/boost-property_tree
+	url = https://github.com/boostorg/property_tree.git
+	branch = master
+[submodule "submodules/boost-type_traits"]
+	path = submodules/boost-type_traits
+	url = https://github.com/boostorg/type_traits.git
+	branch = master
+[submodule "submodules/boost-type_index"]
+	path = submodules/boost-type_index
+	url = https://github.com/boostorg/type_index.git
+	branch = master

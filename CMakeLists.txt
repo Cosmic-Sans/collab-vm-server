@@ -1,5 +1,67 @@
 cmake_minimum_required(VERSION 3.7)
 
+set(Boost_INCLUDE_DIRS "")
+foreach(boost_library IN ITEMS
+  algorithm
+  align
+  any
+  array
+  asio
+  assert
+  beast
+  bind
+  concept_check
+  config
+  container
+  container_hash
+  core
+  detail
+  endian
+  foreach
+  format
+  function
+  functional
+  fusion
+  integer
+  intrusive
+  io
+  iterator
+  logic
+  math
+  move
+  mp11
+  mpl
+  multi_index
+  numeric_conversion
+  optional
+  predef
+  preprocessor
+  property_tree
+  range
+  serialization
+  smart_ptr
+  spirit
+  static_assert
+  system
+  test
+  throw_exception
+  tuple
+  type_index
+  type_traits
+  utility
+  winapi
+  )
+    list(APPEND Boost_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/${boost_library}/include")
+  endforeach()
+
+find_path(sqlite-modern-cpp_INCLUDE_DIR
+          sqlite_modern_cpp.h
+          PATHS "${CMAKE_SOURCE_DIR}/submodules/sqlite_modern_cpp/hdr/")
+
+find_path(clipp_INCLUDE_DIR
+          clipp.h
+          PATHS "${CMAKE_SOURCE_DIR}/submodules/clipp/include/")
+
 if (BUILD_SHARED_LIBS)
   message(FATAL_ERROR "Building shared versions"
           " of FreeRDP, libvncserver, or Cap'N Proto is not supported")
@@ -104,10 +166,6 @@ find_package(OpenSSL REQUIRED)
 
 find_package(SQLite3 CONFIG REQUIRED)
 
-find_path(sqlite-modern-cpp_INCLUDE_DIR
-          NAMES sqlite_modern_cpp.h
-          PATH_SUFFIXES sqlite_modern_cpp sqlite-modern-cpp)
-
 #set(BUILD_TESTING OFF)
 #set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MDd")
 #set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
@@ -120,20 +178,30 @@ find_path(sqlite-modern-cpp_INCLUDE_DIR
 add_subdirectory(${COLLAB_VM_COMMON} ${COLLAB_VM_COMMON_BINARY_DIR})
 add_definitions("-DCAPNP_VERSION_STR=${CapnProto_VERSION}")
 
-add_compile_definitions(BOOST_ALL_NO_LIB)
-find_package(Boost 1.69 REQUIRED COMPONENTS filesystem program_options system thread)
-add_definitions("-DBOOST_VERSION_STR=${Boost_VERSION}")
-include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-
-link_directories(${Boost_LIBRARY_DIR})
-
 add_definitions("-DPROJECT_VERSION=${PROJECT_VERSION}")
-add_definitions(-DHAS_STD_BYTE -DBOOST_ASIO_HAS_MOVE -DBOOST_ASIO_HAS_STD_ATOMIC -DBOOST_ASIO_HAS_VARIADIC_TEMPLATES -DBOOST_ASIO_HAS_STD_CHRONO)
-# TODO: Enable this when Boost.Process
-# no longer uses deprecated Asio functions
-#add_definitions(-DBOOST_ASIO_NO_DEPRECATED)
+add_definitions(
+  # Prevent Boost from trying to link
+  -DBOOST_ALL_NO_LIB
+  # Boost Asio options
+  -DBOOST_ASIO_HAS_MOVE
+  -DBOOST_ASIO_HAS_STD_ATOMIC
+  -DBOOST_ASIO_HAS_VARIADIC_TEMPLATES
+  -DBOOST_ASIO_HAS_STD_CHRONO
+  -DBOOST_ASIO_DISABLE_BOOST_ARRAY
+  -DBOOST_ASIO_DISABLE_BOOST_ASSERT
+  -DBOOST_ASIO_DISABLE_BOOST_BIND
+  -DBOOST_ASIO_DISABLE_BOOST_CHRONO
+  -DBOOST_ASIO_DISABLE_BOOST_DATE_TIME
+  -DBOOST_ASIO_DISABLE_BOOST_LIMITS
+  -DBOOST_ASIO_DISABLE_BOOST_REGEX
+  -DBOOST_ASIO_DISABLE_BOOST_STATIC_CONSTANT
+  -DBOOST_ASIO_DISABLE_BOOST_THROW_EXCEPTION
+  -DBOOST_ASIO_DISABLE_BOOST_WORKAROUND
+  -DBOOST_ASIO_NO_DEPRECATED)
+
+# Why is this necessary?
 if(MSVC)
-  add_definitions(-D_WIN32_WINNT=0x0501 -D_HAS_AUTO_PTR_ETC=1)
+  add_definitions(-D_WIN32_WINNT=0x0501)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -146,31 +214,8 @@ endif()
 
 find_package(PNG REQUIRED)
 
-find_package(unofficial-cairo CONFIG QUIET)
-if (TARGET unofficial::cairo::cairo)
-  set(Cairo_INCLUDE_DIR "")
-  set(Cairo_LIBRARY unofficial::cairo::cairo unofficial::cairo::cairo-gobject)
-else()
-  find_path(Cairo_INCLUDE_DIR cairo.h PATH_SUFFIXES cairo)
-  find_library(Cairo_LIBRARY NAMES
-    ${CMAKE_STATIC_LIBRARY_PREFIX}cairo${CMAKE_STATIC_LIBRARY_SUFFIX} cairo)
-  if (${Cairo_LIBRARY} MATCHES ".*${CMAKE_STATIC_LIBRARY_SUFFIX}$")
-    # TODO: Don't hardcore Cairo's dependencies
-    find_library(pixman_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}pixman${CMAKE_STATIC_LIBRARY_SUFFIX}
-      ${CMAKE_STATIC_LIBRARY_PREFIX}pixman-1${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(fontconfig_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}fontconfig${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(expat_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}expat${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(freetype_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}freetype${CMAKE_STATIC_LIBRARY_SUFFIX})
-    find_library(bz2_LIBRARY NAMES
-      ${CMAKE_STATIC_LIBRARY_PREFIX}bz2${CMAKE_STATIC_LIBRARY_SUFFIX})
-    set(Cairo_LIBRARY ${Cairo_LIBRARY} ${pixman_LIBRARY} ${fontconfig_LIBRARY}
-      ${expat_LIBRARY} ${freetype_LIBRARY} ${bz2_LIBRARY})
-  endif()
-endif()
+find_package(unofficial-cairo CONFIG)
+set(Cairo_LIBRARY unofficial::cairo::cairo)
 
 include(ExternalProject)
 set(LIBVNCSERVER_CMAKE_CACHE_ARGS ${CL_ARGS})
@@ -249,7 +294,7 @@ target_link_libraries(guacamole PRIVATE ${Cairo_LIBRARY} CapnProto::capnp collab
 add_dependencies(guacamole freerdp libvncserver)
 set(GUACAMOLE_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/common" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src/libguac/guacamole" "${CMAKE_SOURCE_DIR}/submodules/guacamole-server/src" ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp ${COLLAB_VM_COMMON_BINARY_DIR})
 target_compile_definitions(guacamole PRIVATE -DENABLE_WINPR)
-target_include_directories(guacamole PUBLIC ${Cairo_INCLUDE_DIR} ${GUACAMOLE_INCLUDE_DIRS} ${FreeRDP_INCLUDE_DIR} ${FreeRDP-Client_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
+target_include_directories(guacamole PUBLIC ${GUACAMOLE_INCLUDE_DIRS} ${FreeRDP_INCLUDE_DIR} ${FreeRDP-Client_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${LIBVNCSERVER_INCLUDE_DIRS} ${JPEG_INCLUDE_DIR} ${GUACAMOLE_ROOT_DIR})
 if (MSVC)
   find_package(pthreads REQUIRED)
   if (TARGET PThreads4W::PThreads4W)
@@ -263,16 +308,16 @@ endif()
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
 	${FreeRDP_INCLUDE_DIR}
 	${LIBVNCSERVER_INCLUDE_DIRS}
-  ${Cairo_INCLUDE_DIR}
 	${COLLAB_VM_COMMON}
   ${OPENSSL_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}/submodules/GSL/include
   ${Boost_INCLUDE_DIRS}
   ${SQLITE3_INCLUDE_DIR}
   ${sqlite-modern-cpp_INCLUDE_DIR}
+  ${clipp_INCLUDE_DIR}
   ${ARGON2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE
-  argon2 ${Boost_LIBRARIES} CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common
+  argon2 CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common
 	guacamole OpenSSL::Crypto OpenSSL::SSL sqlite3)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)

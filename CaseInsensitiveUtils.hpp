@@ -5,7 +5,6 @@
 
 // Based on an example from Boost Functional
 struct CaseInsensitiveComparator
-    : std::binary_function<std::string, std::string, bool>
 {
     CaseInsensitiveComparator() {}
     explicit CaseInsensitiveComparator(std::locale const& l) : locale_(l) {}
@@ -20,7 +19,6 @@ private:
 };
 
 struct CaseInsensitiveHasher
-    : std::unary_function<std::string, std::size_t>
 {
     CaseInsensitiveHasher() {}
     explicit CaseInsensitiveHasher(std::locale const& l) : locale_(l) {}

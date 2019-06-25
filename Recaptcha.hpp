@@ -3,8 +3,8 @@
 #include <boost/asio/ssl/stream.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/iostreams/device/array.hpp>
-#include <boost/iostreams/stream.hpp>
+//#include <boost/iostreams/device/array.hpp>
+//#include <boost/iostreams/stream.hpp>
 // TODO: Replace Boost Property Tree with Cap'N Proto's JSON parser
 #include <boost/property_tree/json_parser.hpp>
 #include <functional>
@@ -115,7 +115,8 @@ class RecaptchaVerifier {
 
                 {
                   boost::property_tree::ptree pt;
-                  boost::property_tree::read_json(res_.body(), pt);
+                  auto string_stream = std::istringstream(res_.body());
+                  boost::property_tree::read_json(string_stream, pt);
                   request_->callback_(pt.get<bool>("success"));
                 }
                 // Destruct and reconstruct the response in preparation
