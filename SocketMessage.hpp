@@ -10,10 +10,8 @@ struct SharedSocketMessage;
 
 struct SocketMessage : std::enable_shared_from_this<SocketMessage>
 {
-protected:
-  ~SocketMessage() = default;
+  virtual ~SocketMessage() noexcept = default;
 
-public:
   virtual std::vector<boost::asio::const_buffer>& GetBuffers() = 0;
   virtual void CreateFrame() = 0;
 
@@ -60,7 +58,7 @@ struct SharedSocketMessage final : SocketMessage
     }
   }
 
-  ~SharedSocketMessage() = default;
+  ~SharedSocketMessage() noexcept override { }
 
   capnp::MallocMessageBuilder& GetMessageBuilder() {
     assert(frame_.empty() && framed_buffers_.empty());
@@ -80,7 +78,7 @@ struct CopiedSocketMessage final : SocketMessage {
       { boost::asio::const_buffer(buffer_.asBytes().begin(),
                                  buffer_.asBytes().size()) }) {}
 
-  virtual ~CopiedSocketMessage() = default;
+  ~CopiedSocketMessage() noexcept override { }
 
   std::vector<boost::asio::const_buffer>& GetBuffers() override {
     return framed_buffers_;

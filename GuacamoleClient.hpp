@@ -30,6 +30,7 @@ extern "C" {
 #include <optional>
 #include <memory>
 #include <string_view>
+#include <unordered_map>
 
 #include "Guacamole.capnp.h"
 

@@ -33,7 +33,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                           std::chrono::steady_clock::time_point::max()),
         doc_root_(doc_root) {}
 
-  virtual ~WebServerSocket() = default;
+  virtual ~WebServerSocket() noexcept = default;
 
   void Start() {
     socket_.dispatch([ this,
@@ -50,6 +50,7 @@ class WebServerSocket : public std::enable_shared_from_this<
   public:
     MessageBuffer() = default;
     MessageBuffer(const MessageBuffer&) = delete;
+    virtual ~MessageBuffer() noexcept = default;
 
   private:
     friend class WebServerSocket;

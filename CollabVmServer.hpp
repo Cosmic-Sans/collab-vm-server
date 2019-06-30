@@ -3,6 +3,7 @@
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 #include <boost/functional/hash.hpp>
+#include <filesystem>
 #include <gsl/span>
 #include <memory>
 #include <string_view>
@@ -74,11 +75,14 @@ namespace CollabVm::Server
       {
       }
 
+      ~CollabVmSocket() noexcept override { }
+
       class CollabVmMessageBuffer : public TSocket::MessageBuffer
       {
         capnp::FlatArrayMessageReader reader;
       public:
         CollabVmMessageBuffer() : reader(nullptr) {}
+	~CollabVmMessageBuffer() noexcept override { }
         virtual capnp::FlatArrayMessageReader& CreateReader() = 0;
 
         template<typename TBuffer>
@@ -97,6 +101,7 @@ namespace CollabVm::Server
       {
         boost::beast::flat_static_buffer<1024> buffer;
       public:
+	~CollabVmStaticMessageBuffer() noexcept override { }
         void StartRead(std::shared_ptr<TSocket>&& socket) override
         {
           socket->ReadWebSocketMessage(std::move(socket),
@@ -119,6 +124,8 @@ namespace CollabVm::Server
       {
         boost::beast::flat_buffer buffer;
       public:
+	~CollabVmDynamicMessageBuffer() noexcept override = default;
+
         void StartRead(std::shared_ptr<TSocket>&& socket) override
         {
           socket->ReadWebSocketMessage(std::move(socket),
@@ -2521,7 +2528,7 @@ namespace CollabVm::Server
         struct VmSettingsList
         {
           capnp::MallocMessageBuilder message_builder_;
-          capnp::Orphan<capnp::List<VmSetting>> list = message_builder_.getOrphanage().newOrphan<capnp::List<VmSetting>>(capnp::Schema::from<VmSetting::Setting>().getUnionFields().size());
+          capnp::Orphan<capnp::List<VmSetting>> list = message_builder_.getOrphanage().template newOrphan<capnp::List<VmSetting>>(capnp::Schema::from<VmSetting::Setting>().getUnionFields().size());
           VmSettingsList operator=(VmSettingsList&&) noexcept { return VmSettingsList(); }
         } vm_settings;
         auto previous_vm_id = std::optional<std::size_t>();
@@ -2592,11 +2599,6 @@ namespace CollabVm::Server
         client.QueueMessage(admin_vm_info_list_.GetMessage());
       }
 
-      const auto& GetVirtualMachinesMap() const
-      {
-        return virtual_machines_;
-      }
-
       template<typename TCallback>
       void ForEachAdminVm(TCallback&& callback)
       {
@@ -2648,8 +2650,8 @@ namespace CollabVm::Server
         const std::shared_ptr<TClient>& exclude)
       {
         if (admin_vm_list_viewers_.empty() ||
-            admin_vm_list_viewers_.size() == 1 &&
-            admin_vm_list_viewers_.front() == exclude)
+            (admin_vm_list_viewers_.size() == 1 &&
+            admin_vm_list_viewers_.front() == exclude))
         {
           return;
         }
@@ -2730,9 +2732,8 @@ namespace CollabVm::Server
         pending_vm_info_updates_ = 0;
         for (auto& [vm_id, vm] : admin_virtual_machines_)
         {
-          vm->vm.SetVmInfo(
-            VmInfoProducer(server_.virtual_machines_.wrap(
-              [this, vm, vm_id](auto&, auto& vm_info_producer) mutable
+          auto callback = server_.virtual_machines_.wrap(
+              [this, vm=vm, vm_id=vm_id](auto&, auto& vm_info_producer) mutable
               {
                 if (auto& thumbnail_bytes = vm_info_producer.png_bytes;
                   thumbnail_bytes.empty()) {
@@ -2810,14 +2811,15 @@ namespace CollabVm::Server
                       });
                   });
                 BroadcastToViewingAdmins(admin_vm_info_list_.GetMessage());
-              })));
+              });
+          vm->vm.SetVmInfo(
+            VmInfoProducer<decltype(callback)>(std::move(callback)));
         }
       }
 
       void UpdateVirtualMachineInfo(AdminVirtualMachine<TClient>& vm) {
         const auto vm_id = vm.GetId();
-        vm.SetVmInfo(
-          VmInfoProducer(server_.virtual_machines_.wrap(
+	auto callback = server_.virtual_machines_.wrap(
             [this, vm_id](auto&, auto& vm_info_producer) mutable
             {
               auto& vm_data = *admin_virtual_machines_[vm_id];
@@ -2862,7 +2864,9 @@ namespace CollabVm::Server
                 {
                   viewer->QueueMessage(vm_list_message);
                 });
-            })));
+            });
+        vm.SetVmInfo(
+          VmInfoProducer<decltype(callback)>(std::move(callback)));
       }
 
       template <typename TFunction>
@@ -3005,6 +3009,7 @@ namespace CollabVm::Server
           : vm(std::forward<TArgs>(args)...)
         {
         }
+	~AdminVm() noexcept { }
         AdminVirtualMachine<TClient> vm;
         void SetPendingVmInfo(
             std::unique_ptr<capnp::MallocMessageBuilder>&& message_builder,

@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.7)
 
+enable_language(C CXX)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/")
+
+if(NOT MSVC)
+  find_package(Filesystem REQUIRED)
+  set(FILESYSTEM_LIBRARY std::filesystem)
+else()
+  # MSVC doesn't require linking to a filesystem library
+  set(FILESYSTEM_LIBRARY "")
+endif()
+
 set(Boost_INCLUDE_DIRS "")
 foreach(boost_library IN ITEMS
   algorithm
@@ -21,13 +32,11 @@ foreach(boost_library IN ITEMS
   format
   function
   functional
-  fusion
   integer
   intrusive
   io
   iterator
   logic
-  math
   move
   mp11
   mpl
@@ -40,7 +49,6 @@ foreach(boost_library IN ITEMS
   range
   serialization
   smart_ptr
-  spirit
   static_assert
   system
   test
@@ -51,7 +59,7 @@ foreach(boost_library IN ITEMS
   utility
   winapi
   )
-    list(APPEND Boost_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/${boost_library}/include")
+    list(APPEND Boost_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/submodules/boost-${boost_library}/include")
   endforeach()
 
 find_path(sqlite-modern-cpp_INCLUDE_DIR
@@ -238,6 +246,13 @@ ExternalProject_Add(libvncserver SOURCE_DIR "${CMAKE_SOURCE_DIR}/submodules/libv
   CMAKE_CACHE_ARGS ${LIBVNCSERVER_CMAKE_CACHE_ARGS}
     -DCMAKE_INSTALL_PREFIX:PATH=${LIBVNCSERVER_INSTALL_DIR}
     "${LIBVNCSERVER_CMAKE_MODULE_PATH}"
+    -DWITH_LZO:BOOL=OFF
+    -DWITH_SASL:BOOL=OFF
+    -DWITH_SDL:BOOL=OFF
+    -DWITH_GNUTLS:BOOL=OFF
+    -DWITH_GCRYPT:BOOL=OFF
+    -DWITH_FFMPEG:BOOL=OFF
+    -DWITH_WEBSOCKETS:BOOL=OFF
     # libnvcserver doesn't support shared libraries on Windows
     -DBUILD_SHARED_LIBS:BOOL=OFF
 		${LIBVNCSERVER_CMAKE_EXE_LINKER_FLAGS}
@@ -318,7 +333,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
   ${ARGON2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE
   argon2 CapnProto::capnp ${Cairo_LIBRARY} collab-vm-common
-	guacamole OpenSSL::Crypto OpenSSL::SSL sqlite3)
+  guacamole OpenSSL::Crypto OpenSSL::SSL sqlite3 ${FILESYSTEM_LIBRARY})
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)
 if(MSVC)
