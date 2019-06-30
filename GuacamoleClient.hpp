@@ -22,12 +22,12 @@ extern "C" {
 
 #include <atomic>
 #include <boost/asio.hpp>
-//#include <boost/thread.hpp>
 #include <cairo.h>
 #include <capnp/message.h>
 #include <functional>
 #include <gsl/span>
 #include <optional>
+#include <pthread.h>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
@@ -252,19 +252,10 @@ private:
       // when it exits it is safe to deallocate the guac_client
       auto& guacamole_client =
         *static_cast<GuacamoleClient*>(socket->data);
-      /*
-      boost::this_thread::at_thread_exit([&guacamole_client]
-      {
-        // The stop callback is posted to an io_context thread
-        // to prevent a deadlock with Windows pthreads
-        guacamole_client.state_ = State::kStopped;
-        boost::asio::post(guacamole_client.io_context_,
-          [&guacamole_client]
-          {
-            static_cast<TCallbacks&>(guacamole_client).OnStop();
-          });
-      });
-      */
+      auto* destructor_key = &guacamole_client.guacamole_thread_destructor_key;
+      pthread_key_create(destructor_key, &GuacamoleThreadDestructor);
+      pthread_setspecific(*destructor_key, &guacamole_client);
+
       socket->write_handler = [](auto* socket, auto* data)
       {
         auto& message_builder = *static_cast<capnp::MallocMessageBuilder*>(data);
@@ -355,11 +346,24 @@ private:
     return args;
   }
 
+  static void GuacamoleThreadDestructor(void* data)
+  {
+    auto& guacamole_client =
+      *static_cast<GuacamoleClient*>(data);
+
+    pthread_key_delete(guacamole_client.guacamole_thread_destructor_key);
+    // The stop callback is posted to an io_context thread
+    // to prevent a deadlock with Windows pthreads
+    guacamole_client.state_ = State::kStopped;
+    static_cast<TCallbacks&>(guacamole_client).OnStop();
+  }
+
   boost::asio::io_context& io_context_;
   std::unique_ptr<guac_user, decltype(&guac_user_free)> user_;
   std::unique_ptr<guac_client, decltype(&guac_client_free)> client_;
   std::vector<const char*> args_;
   std::unordered_map<std::string_view, std::string_view> args_map_;
+  ::pthread_key_t guacamole_thread_destructor_key;
 
   enum class State : std::uint8_t
   {
