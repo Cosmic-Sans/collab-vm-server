@@ -1,4 +1,4 @@
-image: Visual Studio 2017
+image: Visual Studio 2019
 platform: x64
 environment:
   # Always save the cache because there isn't enough time
@@ -21,11 +21,11 @@ cache:
 build_script:
   - mkdir build
   - cd build
-  - cmake -G "Visual Studio 15 2017 Win64" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows -DBOOST_ROOT=C:/Libraries/boost_1_69_0/ -DBoost_USE_STATIC_LIBS=ON -DBoost_USE_STATIC_RUNTIME=OFF ..
+  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows -DBOOST_ROOT=C:/Libraries/boost_1_69_0/ -DBoost_USE_STATIC_LIBS=ON -DBoost_USE_STATIC_RUNTIME=OFF ..
   - cmake --build . --target install --config RelWithDebInfo
   # Vcpkg should automatically copy any necessary DLLs,
   # but it doesn't so manually copy them
-  - ps: cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &'C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Tools\MSVC\14.16.27023\bin\Hostx64\x64\dumpbin.exe' /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
+  - ps: cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.21.27702\bin\Hostx86\x86\dumpbin.exe' /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
 artifacts:
   - path: install/
     name: collab-vm-server
