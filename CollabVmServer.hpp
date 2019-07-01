@@ -16,6 +16,7 @@
 #include <capnp/message.h>
 #include <capnp/serialize.h>
 #include <kj/io.h>
+#include <stdio.h>
 
 #include "capnp-list.hpp"
 #include "CaseInsensitiveUtils.hpp"
@@ -1165,11 +1166,14 @@ namespace CollabVm::Server
                 settings.GetServerSetting(ServerSetting::Setting::BAN_IP_COMMAND)
                         .getBanIpCommand();
               if (ban_ip_command.size()) {
-                /*
-                boost::process::spawn(
-                  ban_ip_command.cStr(),
-                  boost::process::env["IP_ADDRESS"] = ip_address);
-                  */
+#ifdef _WIN32
+  #define putenv _putenv
+#endif
+                putenv(("IP_ADDRESS=" + ip_address).data());
+#ifdef _WIN32
+  #undef putenv
+#endif
+                ExecuteCommandAsync(ban_ip_command.cStr());
               }
             });
           break;
@@ -2231,7 +2235,7 @@ namespace CollabVm::Server
           if (const auto start_command =
                 state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
               start_command.size()) {
-            //boost::process::spawn(start_command.cStr());
+            ExecuteCommandAsync(start_command.cStr());
           }
 
           state.active_ = true;
@@ -2262,7 +2266,7 @@ namespace CollabVm::Server
           if (const auto stop_command =
                 state.GetSetting(VmSetting::Setting::STOP_COMMAND).getStopCommand();
               stop_command.size()) {
-            //boost::process::spawn(stop_command.cStr());
+            ExecuteCommandAsync(stop_command.cStr());
           }
 
           state.active_ = false;
@@ -2281,7 +2285,7 @@ namespace CollabVm::Server
           if (const auto restart_command =
                 state.GetSetting(VmSetting::Setting::RESTART_COMMAND).getRestartCommand();
               restart_command.size()) {
-            //boost::process::spawn(restart_command.cStr());
+            ExecuteCommandAsync(restart_command.cStr());
           }
 
           state.active_ = true;
@@ -3081,6 +3085,19 @@ namespace CollabVm::Server
         std::shared_ptr<SharedSocketMessage>,
         boost::hash<ThumbnailKey>> thumbnails_;
     };
+
+    static void ExecuteCommandAsync(const char* command) {
+#ifdef _WIN32
+#define popen _popen
+#endif
+      const auto process_stream = popen(command, "r");
+      if (process_stream) {
+        fclose(process_stream);
+      }
+#ifdef _WIN32
+#undef popen
+#endif
+    }
 
     const std::chrono::seconds vm_info_update_frequency_ =
       std::chrono::seconds(10);
