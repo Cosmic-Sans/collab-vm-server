@@ -3086,17 +3086,16 @@ namespace CollabVm::Server
         boost::hash<ThumbnailKey>> thumbnails_;
     };
 
-    static void ExecuteCommandAsync(const char* command) {
+    static void ExecuteCommandAsync(const std::string_view command) {
+      // system() is used for simplicity but it is actually synchronous,
+      // so the command is manipulated to make the shell return immediately
+      const auto async_shell_command =
 #ifdef _WIN32
-#define popen _popen
+        std::string("start ") + command.data();
+#else
+        command.data() + std::string(" &");
 #endif
-      const auto process_stream = popen(command, "r");
-      if (process_stream) {
-        fclose(process_stream);
-      }
-#ifdef _WIN32
-#undef popen
-#endif
+      system(async_shell_command.c_str());
     }
 
     const std::chrono::seconds vm_info_update_frequency_ =
