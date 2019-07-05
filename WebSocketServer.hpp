@@ -4,9 +4,10 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
-//#include <boost/filesystem.hpp>
+#include <cerrno>
 #include <filesystem>
 #include <cassert>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -601,23 +602,37 @@ class WebServer : public TThreadPool {
                                         const auto signal_number) { Stop(); });
 
     auto resolver = asio::ip::tcp::resolver(TThreadPool::io_context_);
-    auto ec = boost::system::error_code();
-    auto it = resolver.resolve(host, std::to_string(port), ec);
-    if (ec) {
-      std::cout << "Could not resolve hostname \"" << host << '"' << std::endl;
+    auto error_code = boost::system::error_code();
+    auto resolver_results = resolver.resolve(host, std::to_string(port), error_code);
+    if (error_code || resolver_results.empty()) {
+      std::cout << "Could not resolve hostname \"" << host << "\"\n";
+      std::cout << error_code.message() << std::endl;
       return;
     }
 
-    const auto ep = asio::ip::tcp::endpoint(*it.begin());
-    std::cout << "Listening on " << ep << std::endl;
+    // TODO: Listen on all resolved endpoints
+    const auto endpoint = asio::ip::tcp::endpoint(*resolver_results.begin());
 
-    acceptor_.open(ep.protocol());
-    acceptor_.bind(ep);
-    acceptor_.listen();
+    try {
+      acceptor_.open(endpoint.protocol());
+      acceptor_.bind(endpoint);
+      acceptor_.listen();
 
-    DoAccept();
+      std::cout << "Listening on " << acceptor_.local_endpoint() << std::endl;
 
-    TThreadPool::RunWorkers();
+      DoAccept();
+
+      TThreadPool::RunWorkers();
+    } catch (const boost::system::system_error& exception) {
+      std::cout << "Failed to start server\n";
+      std::cout << exception.what() << std::endl;
+      error_code = exception.code();
+      if (port < 1024
+          && error_code.category() == boost::asio::error::get_system_category()
+          && error_code.value() == EACCES) {
+        std::cout << "Elevated permissions may be required to listen on ports below 1024" << std::endl;
+      }
+    }
   }
 
   virtual void Stop() {

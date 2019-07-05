@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
   // the hypervisor and Guacamole client threads
   const auto cores = std::thread::hardware_concurrency();
   auto threads = std::max(cores / 2, 1u);
-  auto port = 80u;
+  auto port = 0u;
   auto root = "."s;
   auto auto_start_vms = true;
   auto invalid_arguments = std::vector<std::string>();
@@ -56,14 +56,14 @@ int main(int argc, char* argv[]) {
     help,
     version
   } mode = start;
-  auto cli_arguments = (
+  const auto cli_arguments = (
       (option("--host", "-l") & value("address", host))
         .doc("ip or host to listen on (default: localhost)"),
       (option("--threads", "-t") & integer("number", threads))
         .doc("the number of threads the server will use (default: "
           + std::to_string(threads) + " - half the number of cores)"),
       (option("--port", "-p") & integer("number", port))
-        .doc("the port to listen on (default: " + std::to_string(port)),
+        .doc("the port to listen on (default: random)"),
       (option("--root", "-r") & value("path", root))
         .doc("the root directory to serve files from (default: '.')"),
       option("--cert", "-c") // TODO: use this argument
