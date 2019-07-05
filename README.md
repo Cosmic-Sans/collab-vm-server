@@ -9,12 +9,9 @@ Please note that this is currently an incomplete project. This may not build pro
 
 ### Visual Studio
 Requirements:
-* Visual Studio 2017 (any edition)
-	* Make sure to install the "Desktop development with C++" workload and the "Visual C++ tools for CMake" component
+* Visual Studio 2019 (any edition)
+	* Make sure to install the "Desktop development with C++" workload
 * [vcpkg](https://github.com/Microsoft/vcpkg)
-* About 3 GiB of disk space for vcpkg packages and the [prebuilt Boost
-  binaries](https://sourceforge.net/projects/boost/files/boost-binaries/) or 10
-  GiB for only vcpkg packages
 
 1. This repository relies on submodules. To clone both the repo and all of its submodules do:  
 	```git clone --recursive https://github.com/Cosmic-Sans/collab-vm-server.git```  
@@ -22,11 +19,9 @@ Or if you've already cloned it, you can download only the submodules by doing:
 	```git submodule update --init --recursive```
 1. After downloading vcpkg and running bootstrap-vcpkg.bat, use the following command to install all the required dependencies:
 	```
-	./vcpkg.exe install --triplet x86-windows cairo libjpeg-turbo sqlite-modern-cpp libpng openssl pthreads
-	# If the prebuilt Boost binaries are not being used,
-	# add 'boost' to the list of packages above
+	./vcpkg.exe install --triplet x86-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
 	```
-1. Open the collab-vm-server folder in Visual Studio 2017, right-click on the CMakeLists.txt file in the Solution Explorer and click "Change CMake Settings" to create a CMakeSettings.json file. Then add a variables property to the configuration so it looks similar to the following:
+1. Open the collab-vm-server folder in Visual Studio 2019, right-click on the CMakeLists.txt file in the Solution Explorer and click "Change CMake Settings" to create a CMakeSettings.json file. Then add a variables property to the configuration so it looks similar to the following:
 	```
 	...
 	{
@@ -50,12 +45,6 @@ Or if you've already cloned it, you can download only the submodules by doing:
 		  "value": "x86-windows"
 		},
 		{
-		  // Only add this if the prebuilt binaries are being used
-		  "name": "BOOST_ROOT",
-		  // Fix this path
-		  "value": "C:\\boost_1_69_0"
-		},
-		{
 		  "name": "OPENSSL_ROOT_DIR",
 		  // Fix this path
 		  "value": "C:\\vcpkg\\installed\\x86-windows"
@@ -66,8 +55,24 @@ Or if you've already cloned it, you can download only the submodules by doing:
 	```
 1. Verify the correct configuration is selected in the dropdown (e.g. x86-Debug) and build the solution.
 
-## Building on Linux
-To be written
+## Building on Linux and macOS
+GCC (minimum version: 8) or Clang (minimum version: 8) are required. Clang must be used on macOS.
+
+Build vcpkg and required packages:
+```
+git clone https://github.com/Microsoft/vcpkg.git
+cd vcpkg
+./bootstrap-vcpkg.sh
+./vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl
+```
+
+Build collab-vm-server:
+```
+mkdir build
+cd build
+cmake -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CXX_COMPILER=/path/to/bin/clang++ -DCMAKE_C_COMPILER=/path/to/bin/clang ..
+cmake --build .
+```
 
 ## Building on anything else
 It is currently unknown if this project compiles on any other operating systems. The main focus is Windows and Linux. However, if you can successfully get the collab-vm-server to build on another OS (e.g. MacOS, FreeBSD) then please make a pull request with instructions.
