@@ -1178,6 +1178,58 @@ namespace CollabVm::Server
             });
           break;
         }
+        case CollabVmClientMessage::Message::PAUSE_TURN_TIMER:
+        {
+          if (is_admin_ && connected_vm_id_)
+          {
+            server_.virtual_machines_.dispatch(
+              [vm_id = connected_vm_id_](auto& virtual_machines)
+              {
+                if (const auto virtual_machine =
+                      virtual_machines.GetAdminVirtualMachine(vm_id);
+                    virtual_machine)
+                {
+                  virtual_machine->PauseTurnTimer();
+                }
+              });
+          }
+          break;
+        }
+        case CollabVmClientMessage::Message::RESUME_TURN_TIMER:
+        {
+          if (is_admin_ && connected_vm_id_)
+          {
+            server_.virtual_machines_.dispatch(
+              [vm_id = connected_vm_id_](auto& virtual_machines)
+              {
+                if (const auto virtual_machine =
+                      virtual_machines.GetAdminVirtualMachine(vm_id);
+                    virtual_machine)
+                {
+                  virtual_machine->ResumeTurnTimer();
+                }
+              });
+          }
+          break;
+        }
+        case CollabVmClientMessage::Message::END_TURN:
+        {
+          if (connected_vm_id_)
+          {
+            server_.virtual_machines_.dispatch(
+              [this, self = shared_from_this(),
+                vm_id = connected_vm_id_](auto& virtual_machines) mutable
+              {
+                if (const auto virtual_machine =
+                      virtual_machines.GetAdminVirtualMachine(vm_id);
+                    virtual_machine)
+                {
+                  virtual_machine->EndCurrentTurn(std::move(self));
+                }
+              });
+          }
+          break;
+        }
         default:
           TSocket::Close();
         }
@@ -1962,6 +2014,44 @@ namespace CollabVm::Server
           });
       }
 
+      void PauseTurnTimer()
+      {
+        state_.dispatch([](auto& state)
+          {
+            if (state.GetSetting(VmSetting::Setting::Which::TURNS_ENABLED)
+                     .getTurnsEnabled())
+            {
+              state.PauseTurnTimer();
+            }
+          });
+      }
+
+      void ResumeTurnTimer()
+      {
+        state_.dispatch([](auto& state)
+          {
+            if (state.GetSetting(VmSetting::Setting::Which::TURNS_ENABLED)
+                     .getTurnsEnabled())
+            {
+              state.ResumeTurnTimer();
+            }
+          });
+      }
+
+      void EndCurrentTurn(std::shared_ptr<TClient>&& user)
+      {
+        state_.dispatch(
+          [user = std::forward<std::shared_ptr<TClient>>(user)](auto& state)
+          {
+            if (state.GetSetting(VmSetting::Setting::Which::TURNS_ENABLED)
+                     .getTurnsEnabled()
+                && (state.HasCurrentTurn(user) || state.IsAdmin(user)))
+            {
+              state.EndCurrentTurn();
+            }
+          });
+      }
+
       struct VmState final
         : TurnController<std::shared_ptr<TClient>>,
           UserChannel<TClient, typename TClient::UserData, VmState>
@@ -2002,6 +2092,10 @@ namespace CollabVm::Server
             guacamole_client_(io_context, admin_vm)
         {
           SetAdminVmInfo(admin_vm_info);
+
+          VmTurnController::SetTurnTime(
+            std::chrono::seconds(
+              GetSetting(VmSetting::Setting::TURN_TIME).getTurnTime()));
         }
 
         capnp::List<VmSetting>::Builder GetInitialSettings(
@@ -2143,11 +2237,17 @@ namespace CollabVm::Server
             std::deque<std::shared_ptr<TClient>>& users_queue,
             std::chrono::milliseconds time_remaining) {
           auto message = SocketMessage::CreateShared();
-          auto vmTurnInfo =
+          auto vm_turn_info =
             message->GetMessageBuilder().initRoot<CollabVmServerMessage>()
             .initMessage().initVmTurnInfo();
-          vmTurnInfo.setTimeRemaining(time_remaining.count());
-          auto users_list = vmTurnInfo.initUsers(users_queue.size());
+          vm_turn_info.setState(
+            GetSetting(VmSetting::Setting::TURNS_ENABLED).getTurnsEnabled()
+            ? VmTurnController::IsPaused()
+              ? CollabVmServerMessage::TurnState::PAUSED
+              : CollabVmServerMessage::TurnState::ENABLED
+            : CollabVmServerMessage::TurnState::DISABLED);
+          vm_turn_info.setTimeRemaining(time_remaining.count());
+          auto users_list = vm_turn_info.initUsers(users_queue.size());
           auto i = 0u;
           const auto& channel_users = VmUserChannel::GetUsers();
           for (auto& user_in_queue : users_queue) {
@@ -2206,6 +2306,20 @@ namespace CollabVm::Server
                 param.getName().cStr(), param.getValue().cStr());
             });
           guacamole_client_.SetArguments(std::move(params_map));
+        }
+
+        [[nodiscard]]
+        bool HasCurrentTurn(const std::shared_ptr<TClient>& user) const
+        {
+          const auto current_user = VmTurnController::GetCurrentUser();
+          return current_user.has_value() && current_user == user;
+        }
+
+        [[nodiscard]]
+        bool IsAdmin(const std::shared_ptr<TClient>& user) const
+        {
+          const auto user_data = VmUserChannel::GetUserData(user);
+          return user_data.has_value() && user_data.value().get().is_admin;
         }
 
         bool active_ = false;
@@ -2407,20 +2521,14 @@ namespace CollabVm::Server
       void ReadInstruction(std::shared_ptr<TClient> user, TCallback&& callback)
       {
         state_.dispatch(
-          [this, user = std::move(user),
+          [user = std::move(user),
            callback=std::forward<TCallback>(callback)](auto& state)
           {
-            if (!state.connected_) {
-              return;
+            if (state.connected_
+                && (state.HasCurrentTurn(user) && !state.IsPaused()
+                    || state.IsAdmin(user))) {
+              state.guacamole_client_.ReadInstruction(callback());
             }
-            if (const auto current_user = state.GetCurrentUser();
-                !current_user.has_value() || current_user != user) {
-              if (const auto user_data = state.GetUserData(user);
-                  !user_data.has_value() || user_data.value().get().is_admin) {
-                return;
-              }
-            }
-            state.guacamole_client_.ReadInstruction(callback());
           });
       }
 
@@ -2755,7 +2863,8 @@ namespace CollabVm::Server
                     reinterpret_cast<kj::byte*>(thumbnail_bytes.data()),
                     thumbnail_bytes.size()));
                 }
-                if (vm_info_producer.vm_info != nullptr)
+                vm->has_vm_info = vm_info_producer.vm_info != nullptr;
+                if (vm->has_vm_info)
                 {
                   pending_vm_info_updates_++;
                 }

@@ -9,23 +9,34 @@ namespace CollabVm::Server {
 template<typename TUserPtr>
 class TurnController {
   boost::asio::io_context& io_context_;
-	boost::asio::steady_timer turn_timer_;
+  boost::asio::steady_timer turn_timer_;
   typename decltype(turn_timer_)::duration turn_time_;
-	std::deque<TUserPtr> turn_queue_;
+  std::deque<TUserPtr> turn_queue_;
+  std::optional<std::chrono::milliseconds> paused_time_;
 
-  void StartNextTurn()
+  void UpdateCurrentTurn(typename decltype(turn_timer_)::duration time_remaining)
   {
-    turn_timer_.expires_after(turn_time_);
-    turn_timer_.async_wait([this, current_user = *turn_queue_.begin()](auto ec)
+    if (turn_queue_.empty())
     {
-      if (!ec)
-      {
-        RemoveUser(current_user);
-      }
-    });
+      OnCurrentUserChanged(turn_queue_, std::chrono::milliseconds(0));
+      return;
+    }
+
+    if (!IsPaused())
+    {
+      turn_timer_.expires_after(time_remaining);
+      turn_timer_.async_wait(
+        [this, current_user = *turn_queue_.begin()](auto ec)
+        {
+          if (!ec)
+          {
+            RemoveUser(current_user);
+          }
+        });
+    }
     OnCurrentUserChanged(
       turn_queue_,
-      std::chrono::duration_cast<std::chrono::milliseconds>(turn_time_));
+      std::chrono::duration_cast<std::chrono::milliseconds>(time_remaining));
   }
 
   std::chrono::milliseconds GetTimeRemaining() const
@@ -36,7 +47,8 @@ class TurnController {
 public:
   explicit TurnController(boost::asio::io_context& io_context) :
     io_context_(io_context),
-    turn_timer_(io_context)
+    turn_timer_(io_context),
+    turn_time_(0)
   {
   }
 
@@ -70,7 +82,7 @@ public:
 
     if (user->turn_queue_position_ == 0)
     {
-      StartNextTurn();
+      UpdateCurrentTurn(turn_time_);
     }
     else
     {
@@ -97,14 +109,7 @@ public:
     user->turn_queue_position_.reset();
     if (old_position == 0)
     {
-      if (turn_queue_.empty())
-      {
-        OnCurrentUserChanged(turn_queue_, std::chrono::milliseconds(0));
-      }
-      else
-      {
-        StartNextTurn();
-      }
+      UpdateCurrentTurn(turn_time_);
     }
     else
     {
@@ -119,10 +124,49 @@ public:
     turn_time_ = time;
   }
 
+  void PauseTurnTimer()
+  {
+    const auto time_remaining = GetTimeRemaining();
+    const auto was_running = turn_timer_.cancel();
+    paused_time_ = was_running && time_remaining.count() > 0
+        ? time_remaining
+        : std::chrono::duration_cast<std::chrono::milliseconds>(turn_time_);
+    UpdateCurrentTurn(paused_time_.value());
+  }
+
+  bool IsPaused() const
+  {
+    return paused_time_.has_value();
+  }
+
+  void ResumeTurnTimer()
+  {
+    if (IsPaused())
+    {
+      const auto time_remaining = paused_time_.value();
+      paused_time_.reset();
+      UpdateCurrentTurn(time_remaining);
+    }
+  }
+
+  void EndCurrentTurn()
+  {
+    if (turn_queue_.empty())
+    {
+      return;
+    }
+    RemoveUser(turn_queue_.front());
+  }
+
   void Clear()
   {
     turn_timer_.cancel();
-    turn_queue_.clear();
+
+    if (!turn_queue_.empty())
+    {
+      turn_queue_.clear();
+      OnCurrentUserChanged(turn_queue_, std::chrono::milliseconds(0));
+    }
   }
 
 protected:
