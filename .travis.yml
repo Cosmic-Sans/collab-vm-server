@@ -1,0 +1,30 @@
+notifications:
+  email: false
+branches:
+  except:
+    - prerelease
+language: minimal
+sudo: required
+services:
+- docker
+before_install:
+- git clone --depth=1 https://github.com/Microsoft/vcpkg.git ../vcpkg/
+# HACK: Lower the required version of cmake because apk doesn't have 3.14
+- sed -i -e 's/3\.14\.0/3.13.0/g' ../vcpkg/scripts/vcpkgTools.xml
+# Prevent FreeRDP from changing RPATH
+- sed -i -e '/RPATH/d' submodules/FreeRDP/CMakeLists.txt
+- docker run -dit --name musl -v $(pwd)/../vcpkg:/src/vcpkg -v $(pwd):/src/collab-vm-server muslcc/x86_64:x86_64-linux-musl sh
+script:
+- docker exec -it musl sh -c "apk add --no-cache curl perl unzip tar make cmake ninja git && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && cp /src/vcpkg/triplets/x64-linux.cmake /src/vcpkg/triplets/x64-linux-musl.cmake && echo 'set(CMAKE_SYSROOT /x86_64-linux-musl/)'>>/src/vcpkg/scripts/toolchains/linux.cmake && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
+before_deploy:
+  - git tag --force prerelease HEAD
+deploy:
+  provider: releases
+  prerelease: true
+  overwrite: true
+  file: build/collab-vm-server
+  skip_cleanup: true
+  on:
+    all_branches: true
+  api_key:
+    secure: Oen8hhOac4Un0ntolrtZEk41AVFl46hrV4hFOSiRifrJfbCMIkJHWaSM4urZBC1+9+PTH0gwDMHNG0EMo/gkHo7S0ov/C0V/tBC0XgVFjWSVaFkfni4cbYrIYD78r6Ci9c5zg7vP2+6tl0JcVcmRqo6rSEKa7Qc3wO5pnBP14LTiAA/ATP8IYdPJIKfnG4xR44ZXFV0Aetu/c97elYfWy+nOUDN1V81Tf3zjyToj6wqNncq20EmH47+JkP9lxjBvnGlx+UvQqKitvCqnAFDHdGAO8lPEYAuYGUdV7FpX4g3D5bx9D1/vSokP7Phit6lkCmTU/y4sxvm8T1i8EjpyNeevILhuhJEMDFFnghCRzVwBdxt4OV/KuafYQhBrtcPNi3ew0Osq0XBcw00qLaftXbp2sBW44GCHXTxnGhodQsEsYiBEc16inOtY4gxAL1dqdBRccE3RdRI4X96yf+eGCaaEyRp7YUwZUI2XTJop58Dzb0SMvzqYF6foDTunmrhRsdDrFEtgDmqHGaVyjKDmCr5Y7S//zNRBP9Fm7m2/AHa8YJ38lqhXdEyNm73+qOBkcOH7kTttMumCJxGg6P2c8ykmwo0jKkkUjLfcYMz7KLBYg4EYtNy8S9l3P9LVjILvcS8oJol3WnPk0M80lJj+lhcNXiBlf0+ItDJCOS3fxmE=
