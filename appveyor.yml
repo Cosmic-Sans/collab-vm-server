@@ -1,9 +1,12 @@
 image: Visual Studio 2019
 platform: x64
+skip_tags: true
 environment:
   # Always save the cache because there isn't enough time
   # to build both the dependencies and the collab-vm-server
   APPVEYOR_SAVE_CACHE_ON_ERROR: true
+  access_token:
+    secure: /1wKmhBRo1sCNw9MG237fBihMhCJIMVajWI4BgTKQm39r7J6StfkJFg26TVkK/Qv
 pull_requests:
   do_not_increment_build_number: true
 install:
@@ -29,3 +32,22 @@ build_script:
 artifacts:
   - path: install/
     name: collab-vm-server
+before_deploy:
+    # Move the tag to the most recent commit, but delete it first
+    # so GitHub updates the timestamp of the release
+  - git tag --force prerelease HEAD
+  - git config --global credential.helper store
+  - ps: Add-Content "$HOME\.git-credentials" "https://$($env:access_token):x-oauth-basic@github.com`n"
+  - git push --delete origin prerelease
+  - git push --force --tags origin prerelease
+deploy:
+  provider: GitHub
+  tag: prerelease
+  artifact: collab-vm-server
+  prerelease: true
+  draft: false
+  force_update: true
+  on:
+    branch: master
+  auth_token:
+    secure: /1wKmhBRo1sCNw9MG237fBihMhCJIMVajWI4BgTKQm39r7J6StfkJFg26TVkK/Qv
