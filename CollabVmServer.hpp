@@ -61,8 +61,12 @@ namespace CollabVm::Server
       struct UserData
       {
         std::string username;
-        bool is_admin;
+        CollabVmServerMessage::UserType user_type;
         typename TSocket::IpAddress::IpBytes ip_address;
+
+        bool IsAdmin() const {
+          return user_type == CollabVmServerMessage::UserType::ADMIN;
+        }
       };
 
       CollabVmSocket(boost::asio::io_context& io_context,
@@ -199,7 +203,7 @@ namespace CollabVm::Server
                 channel.GetChatRoom().GetChatHistory(connectSuccess);
                 connectSuccess.setUsername(username);
                 QueueMessage(std::move(socket_message));
-                UserData user_data{ username, is_admin_, TSocket::GetIpAddress().AsBytes() };
+                UserData user_data{ username, GetUserType(), TSocket::GetIpAddress().AsBytes() };
                 channel.AddUser(user_data, std::move(self));
               };
               if (channel_id == global_channel_id)
@@ -218,11 +222,15 @@ namespace CollabVm::Server
                   return;
                 }
                 connected_vm_id_ = channel_id;
+                LeaveVmList();
                 server_.virtual_machines_.dispatch([
                   this, self = shared_from_this(), channel_id,
                     connect_to_channel = std::move(connect_to_channel)
                 ](auto& virtual_machines) mutable
                   { 
+                    if (is_viewing_vm_list_) {
+                      virtual_machines.RemoveVmListViewer(self);
+                    }
                     const auto virtual_machine = virtual_machines.
                       GetAdminVirtualMachine(channel_id);
                     if (!virtual_machine)
@@ -1236,6 +1244,17 @@ namespace CollabVm::Server
       }
 
     private:
+      CollabVmServerMessage::UserType GetUserType()
+      {
+        if (is_admin_) {
+          return CollabVmServerMessage::UserType::ADMIN;
+        }
+        if (is_logged_in_) {
+          return CollabVmServerMessage::UserType::REGULAR;
+        }
+        return CollabVmServerMessage::UserType::GUEST;
+      }
+
       void SendChatChannelId(const std::uint32_t id)
       {
         auto socket_message = SocketMessage::CreateShared();
@@ -1401,6 +1420,7 @@ namespace CollabVm::Server
     private:
       void OnDisconnect() override {
         LeaveServerConfig();
+        LeaveVmList();
         auto leave_channel =
           [self = shared_from_this()]
           (auto& channel) {
@@ -1568,8 +1588,7 @@ namespace CollabVm::Server
 
       std::vector<std::byte> totp_key_;
       bool is_logged_in_ = false;
-      //bool is_admin_ = false;
-      bool is_admin_ = true; // TESTING ONLY
+      bool is_admin_ = false;
       bool is_viewing_server_config = false;
       bool is_viewing_vm_list_ = false;
       bool is_in_global_chat_ = false;
@@ -1793,9 +1812,9 @@ namespace CollabVm::Server
       {
         OnAddUser(user);
         users_.emplace(user, user_data);
-        admins_count_ += !!user_data.is_admin;
+        admins_count_ += !!(user_data.user_type == CollabVmServerMessage::UserType::ADMIN);
         user->QueueMessage(
-          user_data.is_admin
+          user_data.IsAdmin()
           ? CreateAdminUserListMessage()
           : CreateUserListMessage());
 
@@ -1824,7 +1843,7 @@ namespace CollabVm::Server
           (const auto& user_data, auto& user)
           {
             user.QueueMessage(
-              user_data.is_admin ? admin_user_message : user_message);
+              user_data.IsAdmin() ? admin_user_message : user_message);
           });
       }
 
@@ -1875,7 +1894,7 @@ namespace CollabVm::Server
           return;
         }
         const auto& user_data = user_it->second;
-        admins_count_ -= !!user_data.is_admin;
+        admins_count_ -= !!(user_data.user_type == CollabVmServerMessage::UserType::ADMIN);
 
         auto message = SocketMessage::CreateShared();
         auto user_list_remove = message->GetMessageBuilder()
@@ -1910,7 +1929,7 @@ namespace CollabVm::Server
           std::remove_const_t<TUserChannel>, UserChannel>);
         using UserData = std::conditional_t<
           std::is_const_v<TUserChannel>, const TUserData, TUserData>;
-        auto users_ = user_channel.users_;
+        auto& users_ = user_channel.users_;
         auto user = users_.find(user_ptr);
         return user == users_.end()
           ? std::optional<std::reference_wrapper<UserData>>()
@@ -1941,6 +1960,7 @@ namespace CollabVm::Server
         auto& username = user.username;
         list_info.setUsername(
           kj::StringPtr(username.data(), username.length()));
+        list_info.setUserType(user.user_type);
 
         if constexpr (
           std::is_same_v<TListElement, CollabVmServerMessage::UserAdmin::Builder>)
@@ -2319,7 +2339,7 @@ namespace CollabVm::Server
         bool IsAdmin(const std::shared_ptr<TClient>& user) const
         {
           const auto user_data = VmUserChannel::GetUserData(user);
-          return user_data.has_value() && user_data.value().get().is_admin;
+          return user_data.has_value() && user_data.value().get().IsAdmin();
         }
 
         bool active_ = false;
@@ -2788,7 +2808,7 @@ namespace CollabVm::Server
           });
       }
 
-      void RemoveAdminVmListViewer(const std::shared_ptr<TClient> viewer)
+      void RemoveAdminVmListViewer(const std::shared_ptr<TClient>& viewer)
       {
         const auto it = std::find(admin_vm_list_viewers_.begin(),
                                   admin_vm_list_viewers_.end(),
@@ -2798,6 +2818,18 @@ namespace CollabVm::Server
           return;
         }
         admin_vm_list_viewers_.erase(it);
+      }
+
+      void RemoveVmListViewer(const std::shared_ptr<TClient>& viewer)
+      {
+        const auto it = std::find(vm_list_viewers_.begin(),
+                                  vm_list_viewers_.end(),
+                                  viewer);
+        if (it == vm_list_viewers_.end())
+        {
+          return;
+        }
+        vm_list_viewers_.erase(it);
       }
 
       std::size_t pending_vm_info_requests_ = 0;
