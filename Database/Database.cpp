@@ -37,21 +37,14 @@ Database::Database() : db_("collab-vm.db") {
     "  LastOnline INTEGER NOT NULL,"
     "  FailedLogins INTEGER NOT NULL,"
     "  IsAdmin INTEGER NOT NULL,"
-    "  IsDisabled INTEGER NOT NULL,"
-    "  CONSTRAINT Username_fk"
-    "    FOREIGN KEY (Username)"
-    "    REFERENCES UnavailableUsername (Username)"
-    "    DEFERRABLE INITIALLY DEFERRED)";
+    "  IsDisabled INTEGER NOT NULL)";
   db_ <<
     "CREATE TABLE IF NOT EXISTS UserInvite ("
-    "  Id TEXT NOT NULL PRIMARY KEY,"
-    "  Username TEXT NULL,"
+    "  Id BLOB NOT NULL PRIMARY KEY,"
+    "  Username TEXT NULL UNIQUE,"
     "  InviteName TEXT NOT NULL,"
     "  IsAdmin INTEGER NOT NULL,"
-    "  CONSTRAINT Username_fk"
-    "    FOREIGN KEY (Username)"
-    "    REFERENCES UnavailableUsername (Username)"
-    "    DEFERRABLE INITIALLY DEFERRED)";
+    "  Accepted INTEGER NOT NULL DEFAULT 0)";
   db_ <<
     "CREATE TABLE IF NOT EXISTS UnavailableUsername("
     "  Username TEXT NOT NULL PRIMARY KEY)";
@@ -169,6 +162,7 @@ Database::CreateAccount(
     const std::string& username,
     const std::string& password,
     const std::optional<gsl::span<const std::byte, User::totp_key_len>> totp_key,
+    const std::optional<gsl::span<const std::byte, invite_id_len>> invite_id,
     const IpAddress& ip_address) {
   //  if (!std::regex_match(username, username_re_)) {
   //    error =
@@ -188,9 +182,33 @@ Database::CreateAccount(
     }
   */
 
-  if (!CreateReservedUsername(username)) {
-    return CollabVmServerMessage::RegisterAccountResponse::
-        RegisterAccountError::USERNAME_TAKEN;
+  if (invite_id.has_value()) {
+    db_ <<
+      "UPDATE UserInvite"
+      "  SET Accepted = 1"
+      "  WHERE Id = ? AND Accepted = 0"
+      << std::vector<std::byte>(invite_id.value().cbegin(), invite_id.value().cend());
+      if (!db_.rows_modified()) {
+        return CollabVmServerMessage::RegisterAccountResponse::
+            RegisterAccountError::INVITE_INVALID;
+      }
+  } else {
+    auto username_taken = false;
+    db_ << "select count(*) from ("
+      "select 1 from user"
+      "  where username = ?"
+      "  union"
+      "  select 1 from unavailableusername"
+      "  where username = ?"
+      "  union"
+      "  select 1 from userinvite"
+      "  where username = ?)"
+      << username
+      >> username_taken;
+    if (username_taken) {
+      return CollabVmServerMessage::RegisterAccountResponse::
+          RegisterAccountError::USERNAME_TAKEN;
+    }
   }
 
   const auto salt = GeneratePasswordSalt();
@@ -210,11 +228,17 @@ Database::CreateAccount(
   user.last_active_ip_address = 
     user.registration_ip_address = ip_address;
   try {
-    auto users_count = 0;
-    db_ <<
-      "SELECT COUNT(*) FROM User" >>
-      users_count;
-    user.is_admin = !users_count;
+    if (invite_id.has_value()) {
+      db_ <<
+        "SELECT IsAdmin FROM UserInvite"
+        "  WHERE Id = ?"
+        << std::vector<std::byte>(invite_id.value().cbegin(), invite_id.value().cend())
+        >> user.is_admin;
+    } else {
+        db_ <<
+          "SELECT COUNT(*) = 0 FROM User"
+          >> user.is_admin;
+    }
     CreateUser(user);
   } catch (const sqlite::errors::constraint&) {
     // The username was registered after the first check
@@ -444,14 +468,19 @@ bool Database::CreateReservedUsername(const std::string& username) {
 }
 
 std::optional<Database::InviteId> Database::CreateInvite(
-    const std::string& invite_name,
-    const std::string& username,
-    const bool username_already_reserved,
+    const std::string_view invite_name,
+    const std::string_view username,
     const bool is_admin) {
-  if (!CreateReservedUsername(username)
-      && username_already_reserved)
+  if (!username.empty())
   {
-    return {};
+    bool username_taken;
+    db_ << "select count(*) from user"
+      "  where username = ?"
+      << std::string(username)
+      >> username_taken;
+    if (username_taken) {
+      return {};
+    }
   }
 
   UserInvite invite;
@@ -474,51 +503,62 @@ std::optional<Database::InviteId> Database::CreateInvite(
         << invite.name
         << invite.is_admin;
       success = true;
-    } catch (const sqlite::errors::constraint&) {
+    } catch (const sqlite::errors::constraint_primarykey&) {
       // Session ID already exists so generate another one and try again
       success = false;
+    } catch (const sqlite::errors::constraint_unique&) {
+      // Username already exists
+      break;
     }
   } while (!success);
 
-  return invite.id;
+  if (success) {
+    return invite.id;
+  }
+  return {};
 }
 
-bool Database::DeleteReservedUsername(const std::string& username) {
+bool Database::DeleteReservedUsername(const std::string_view username) {
   try {
     db_ << "DELETE FROM UnavailableUsername WHERE Username = ?"
-      << username;
+      << std::string(username);
   } catch (const sqlite::sqlite_exception&) {
     return false;
   }
   return true;
 }
 
-bool Database::UpdateInvite(const std::string& id,
-                            const std::string& username,
+bool Database::UpdateInvite(const gsl::span<const std::byte, invite_id_len> id,
+                            const std::string_view username,
                             const bool is_admin) {
-  try {
-    db_ <<
-      "UPDATE UserInvite"
-      "  SET Username = ?, IsAdmin = ?"
-      "  WHERE Id = ?"
-      << username
-      << is_admin
-      << id;
-  } catch (const sqlite::sqlite_exception&) {
-    return false;
-  }
-  return true;
+  db_ <<
+    "UPDATE UserInvite"
+    "  SET Username = ?, IsAdmin = ?"
+    "  WHERE Id = ?"
+    << std::string(username)
+    << is_admin
+    << std::vector<std::byte>(id.cbegin(), id.cend());
+  return db_.rows_modified();
 }
 
-bool Database::DeleteInvite(const std::string& id) {
+bool Database::DeleteInvite(const gsl::span<const std::byte, invite_id_len> id) {
+db_ <<
+  "DELETE FROM UserInvite WHERE Id = ?"
+  << std::vector<std::byte>(id.cbegin(), id.cend());
+  return db_.rows_modified();
+}
+
+std::pair<bool, std::string> Database::ValidateInvite(const gsl::span<const std::byte, invite_id_len> id) {
+  std::string username;
   try {
     db_ <<
-      "DELETE FROM UserInvite WHERE Id = ?"
-      << id;
+      "select username FROM UserInvite WHERE Id = ? and Accepted = 0"
+      << std::vector<std::byte>(id.cbegin(), id.cend())
+      >> username;
   } catch (const sqlite::sqlite_exception&) {
-    return false;
+    return {false, {}};
   }
-  return true;
+  return {true, username};
 }
 
 }  // namespace CollabVm::Server

@@ -708,32 +708,49 @@ namespace CollabVm::Server
                 buffer = std::move(buffer), message
               ](auto& settings) mutable
               {
-                if (!settings
-                     .GetServerSetting(
-                       ServerSetting::Setting::
-                       ALLOW_ACCOUNT_REGISTRATION)
-                     .getAllowAccountRegistration())
-                {
-                  return;
-                }
+                auto register_request = message.
+                  getAccountRegistrationRequest();
+                const auto requested_username = register_request.getUsername();
+                const auto invite_id = register_request.getInviteId();
                 auto response = SocketMessage::CreateShared();
                 auto& message_builder = response->GetMessageBuilder();
                 auto registration_result = message_builder.initRoot<
                   CollabVmServerMessage::Message>()
                   .initAccountRegistrationResponse().initResult();
-
-                auto register_request = message.
-                  getAccountRegistrationRequest();
-                auto username = register_request.getUsername();
-                if (!Shared::ValidateUsername({
-                  username.begin(), username.size()
-                }))
+                auto valid_username = std::string();
+                if (settings
+                     .GetServerSetting(
+                       ServerSetting::Setting::
+                       ALLOW_ACCOUNT_REGISTRATION)
+                     .getAllowAccountRegistration())
                 {
-                  registration_result.setErrorStatus(
-                    CollabVmServerMessage::RegisterAccountResponse::
-                    RegisterAccountError::USERNAME_INVALID);
-                  QueueMessage(std::move(response));
-                  return;
+                  if (!Shared::ValidateUsername({
+                      requested_username.begin(), requested_username.size()
+                    }))
+                    {
+                      registration_result.setErrorStatus(
+                        CollabVmServerMessage::RegisterAccountResponse::
+                        RegisterAccountError::USERNAME_INVALID);
+                      QueueMessage(std::move(response));
+                      return;
+                    }
+                  valid_username = requested_username;
+                } else {
+                  if (!invite_id.size()) {
+                    return;
+                  }
+                  auto is_valid = false;
+                  std::tie(is_valid, valid_username) =
+                    server_.db_.ValidateInvite(
+                      {reinterpret_cast<const std::byte*>(invite_id.begin()),
+                      reinterpret_cast<const std::byte*>(invite_id.end())});
+                  if (!is_valid || valid_username.empty() ^ requested_username.size()) {
+                    registration_result.setErrorStatus(
+                      CollabVmServerMessage::RegisterAccountResponse::
+                      RegisterAccountError::INVITE_INVALID);
+                    QueueMessage(std::move(response));
+                    return;
+                  }
                 }
                 if (register_request.getPassword().size() >
                   Database::max_password_len)
@@ -766,14 +783,16 @@ namespace CollabVm::Server
                       [Database::User::totp_key_len]>(
                         *two_factor_token.begin())));
                 }
+                std::optional<gsl::span<const std::byte, Database::UserInvite::id_length>> invite_span;
+                if (invite_id.size()) {
+                    invite_span = std::optional(gsl::as_bytes(gsl::make_span(invite_id.begin(), invite_id.end())));
+                }
                 const auto register_result = server_.db_.CreateAccount(
-                  username,
-                  register_request.
-                  getPassword(),
+                  valid_username,
+                  register_request.getPassword(),
                   totp_key,
-                  TSocket::
-                  GetIpAddress().
-                  AsVector());
+                  invite_span,
+                  TSocket::GetIpAddress().AsVector());
                 if (register_result !=
                   CollabVmServerMessage::RegisterAccountResponse::
                   RegisterAccountError::SUCCESS)
@@ -783,7 +802,7 @@ namespace CollabVm::Server
                   return;
                 }
                 server_.CreateSession(
-                  shared_from_this(), username,
+                  shared_from_this(), valid_username,
                   [
                     this, self = shared_from_this(), buffer = std::move(
                       buffer),
@@ -1059,9 +1078,8 @@ namespace CollabVm::Server
                                                >()
                                                .initMessage();
             if (const auto id = server_.db_.CreateInvite(
-              invite.getInviteName(),
-              invite.getUsername(),
-              invite.getUsernameReserved(),
+              {invite.getInviteName().begin(), invite.getInviteName().size()},
+              {invite.getUsername().begin(), invite.getUsername().size()},
               invite.getAdmin()))
             {
               invite_result.setCreateInviteResult(
@@ -1101,12 +1119,10 @@ namespace CollabVm::Server
           {
             const auto invite = message.getUpdateInvite();
             auto socket_message = SocketMessage::CreateShared();
-            const auto invite_id = message.getDeleteInvite().asChars();
+            const auto invite_id = invite.getId().asChars();
             const auto result = server_.db_.UpdateInvite(
-              std::string(
-                invite_id.begin(),
-                invite_id.size()),
-              invite.getUsername(),
+              {reinterpret_cast<const std::byte*>(invite_id.begin()), reinterpret_cast<const std::byte*>(invite_id.end())},
+              {invite.getUsername().begin(), invite.getUsername().size()},
               invite.getAdmin());
             socket_message->GetMessageBuilder()
                           .initRoot<CollabVmServerMessage>()
@@ -1118,11 +1134,25 @@ namespace CollabVm::Server
         case CollabVmClientMessage::Message::DELETE_INVITE:
           if (is_admin_)
           {
-            const auto invite_id = message.getDeleteInvite().asChars();
+            const auto invite_id = message.getDeleteInvite();
             server_.db_.DeleteInvite(
-              std::string(invite_id.begin(), invite_id.size()));
+              {reinterpret_cast<const std::byte*>(invite_id.begin()), reinterpret_cast<const std::byte*>(invite_id.end())});
           }
           break;
+        case CollabVmClientMessage::Message::VALIDATE_INVITE:
+        {
+            const auto invite_id = message.getValidateInvite();
+            auto [is_valid, username] = server_.db_.ValidateInvite({reinterpret_cast<const std::byte*>(invite_id.begin()), reinterpret_cast<const std::byte*>(invite_id.end())});
+            auto socket_message = SocketMessage::CreateShared();
+            auto response = socket_message->GetMessageBuilder()
+                          .initRoot<CollabVmServerMessage>()
+                          .initMessage()
+                          .initInviteValidationResponse();
+            response.setIsValid(is_valid);
+            response.setUsername(username);
+            QueueMessage(std::move(socket_message));
+            break;
+        }
         case CollabVmClientMessage::Message::CREATE_RESERVED_USERNAME:
           if (is_admin_)
           {
@@ -1152,7 +1182,7 @@ namespace CollabVm::Server
           if (is_admin_)
           {
             server_.db_.DeleteReservedUsername(
-              message.getDeleteReservedUsername());
+              {message.getDeleteReservedUsername().begin(), message.getDeleteReservedUsername().size()});
           }
           break;
         case CollabVmClientMessage::Message::BAN_IP:

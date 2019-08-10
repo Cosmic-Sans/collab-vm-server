@@ -69,6 +69,7 @@ struct UserInvite {
       const std::string& username,
       const std::string& password,
       const std::optional<gsl::span<const std::byte, User::totp_key_len>> totp_key,
+      const std::optional<gsl::span<const std::byte, invite_id_len>> invite_id,
       const IpAddress& ip_address);
   std::optional<User> GetUser(const std::string& username);
   void UpdateUser(const User& user);
@@ -120,7 +121,7 @@ static Timestamp GetCurrentTimestamp();
          };
   }
 
-  bool DeleteReservedUsername(const std::string& username);
+  bool DeleteReservedUsername(const std::string_view username);
 
   std::uint32_t GetInvitesCount()
   {
@@ -131,9 +132,8 @@ static Timestamp GetCurrentTimestamp();
     return invites_count;
   }
 
-  std::optional<InviteId> CreateInvite(const std::string& invite_name,
-                                       const std::string& username,
-                                       const bool username_already_reserved,
+  std::optional<InviteId> CreateInvite(const std::string_view invite_name,
+                                       const std::string_view username,
                                        const bool is_admin);
 
   template <typename TCallback>
@@ -161,11 +161,13 @@ static Timestamp GetCurrentTimestamp();
   }
 
 
-  bool UpdateInvite(const std::string& id,
-                    const std::string& username,
+  bool UpdateInvite(const gsl::span<const std::byte, invite_id_len> id,
+                    const std::string_view username,
                     const bool is_admin);
 
-  bool DeleteInvite(const std::string& id);
+  bool DeleteInvite(const gsl::span<const std::byte, invite_id_len> id);
+
+  std::pair<bool, std::string> ValidateInvite(const gsl::span<const std::byte, invite_id_len> id);
 
   std::uint32_t GetNewVmId() {
     std::uint32_t new_vm_id;
