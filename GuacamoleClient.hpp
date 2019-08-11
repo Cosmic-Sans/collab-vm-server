@@ -110,7 +110,9 @@ public:
     user->info.optimal_width = 800;
     user->info.optimal_height = 600;
     const char* audio_mimetypes[] = {
-      static_cast<const char*>("audio/L16")
+      static_cast<const char*>("audio/L8"),
+      static_cast<const char*>("audio/L16"),
+      NULL
     };
     user->info.audio_mimetypes = audio_mimetypes;
     client_->join_handler(user, args_.size(), const_cast<char**>(args_.data()));
