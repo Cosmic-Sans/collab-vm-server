@@ -352,10 +352,14 @@ private:
       *static_cast<GuacamoleClient*>(data);
 
     pthread_key_delete(guacamole_client.guacamole_thread_destructor_key);
-    // The stop callback is posted to an io_context thread
-    // to prevent a deadlock with Windows pthreads
     guacamole_client.state_ = State::kStopped;
-    static_cast<TCallbacks&>(guacamole_client).OnStop();
+    boost::asio::post(guacamole_client.io_context_,
+      [&guacamole_client]
+      {
+        guacamole_client.client_.reset();
+        guacamole_client.user_.reset();
+        static_cast<TCallbacks&>(guacamole_client).OnStop();
+      });
   }
 
   boost::asio::io_context& io_context_;
