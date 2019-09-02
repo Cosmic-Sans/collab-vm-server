@@ -20,7 +20,7 @@
 	branch = master
 [submodule "submodules/libvncserver"]
 	path = submodules/libvncserver
-	url = https://github.com/LibVNC/libvncserver.git
+	url = https://github.com/Cosmic-Sans/libvncserver.git
 	branch = master
 [submodule "submodules/sqlite_modern_cpp"]
 	path = submodules/sqlite_modern_cpp
