@@ -16,7 +16,7 @@ install:
   - git -C C:\Tools\vcpkg\ pull
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
   # Install dependencies
-  - vcpkg.exe install --triplet %PLATFORM%-windows cairo libjpeg-turbo sqlite-modern-cpp libpng openssl pthreads
+  - vcpkg.exe install --triplet %PLATFORM%-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
   # Upgrade dependencies if they were cached
   - vcpkg.exe upgrade --triplet %PLATFORM%-windows --no-dry-run
 cache: 
@@ -24,11 +24,11 @@ cache:
 build_script:
   - mkdir build
   - cd build
-  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows -DBOOST_ROOT=C:/Libraries/boost_1_69_0/ -DBoost_USE_STATIC_LIBS=ON -DBoost_USE_STATIC_RUNTIME=OFF ..
+  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows ..
   - cmake --build . --target install --config RelWithDebInfo
   # Vcpkg should automatically copy any necessary DLLs,
   # but it doesn't so manually copy them
-  - ps: cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &'C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.21.27702\bin\Hostx86\x86\dumpbin.exe' /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
+  - ps: $vswhere = join-path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; $vspath = &$vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; $vspath = join-path $vspath 'Common7\Tools\vsdevcmd.bat'; $dumpbin = cmd /s /c """$vspath"">nul && where dumpbin.exe"; cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &$dumpbin /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
 artifacts:
   - path: install/
     name: collab-vm-server
