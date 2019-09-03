@@ -1451,6 +1451,17 @@ namespace CollabVm::Server
       void OnDisconnect() override {
         LeaveServerConfig();
         LeaveVmList();
+        username_.dispatch(
+          [this, self = shared_from_this()](auto& username) {
+            if (username.empty()) {
+              return;
+            }
+            server_.guests_.dispatch([
+              username = std::move(username)](auto& guests)
+              {
+                guests.erase(username);
+              });
+          });
         auto leave_channel =
           [self = shared_from_this()]
           (auto& channel) {
