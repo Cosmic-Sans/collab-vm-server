@@ -124,7 +124,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                           }
                           OnConnect();
                           sockets.websocket.binary(true);
-                          // sockets.websocket.auto_fragment(true);
+                          sockets.websocket.auto_fragment(false);
                           CreateMessageBuffer()->StartRead(std::move(self));
                         }));
                     return;
