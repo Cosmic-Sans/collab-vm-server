@@ -16,11 +16,9 @@
 namespace CollabVm::Server {
 
 Database::Database() : db_("collab-vm.db") {
-  if (false) {
-    std::cout << "A new database has been created" << std::endl;
-  }
-
   db_ << "PRAGMA foreign_keys = ON";
+  auto created_new = false;
+  db_ << "SELECT COUNT(*) = 0 FROM sqlite_master WHERE type = 'table' and name = 'VmConfig'" >> created_new;
   db_ <<
     "CREATE TABLE IF NOT EXISTS User ("
     "  Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,"
@@ -59,6 +57,48 @@ Database::Database() : db_("collab-vm.db") {
     "  Setting BLOB NOT NULL,"
     "  PRIMARY KEY (IDs_VmId,"
     "               IDs_SettingID))";
+
+  if (created_new) {
+    std::cout << "A new database has been created" << std::endl;
+    CreateTestVm();
+  }
+}
+
+void Database::CreateTestVm() {
+  auto message_builder = capnp::MallocMessageBuilder();
+  auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
+  auto vm_settings = message_builder.initRoot<capnp::List<VmSetting>>(fields.size());
+  for (auto i = 0u; i < fields.size(); i++) {
+    auto new_setting = capnp::DynamicStruct::Builder(vm_settings[i].getSetting());
+    new_setting.clear(fields[i]);
+  }
+  vm_settings[VmSetting::Setting::AUTO_START].getSetting().setAutoStart(true);
+  vm_settings[VmSetting::Setting::NAME].getSetting().setName("Test VM");
+  vm_settings[VmSetting::Setting::DESCRIPTION].getSetting().setDescription("draw stuff");
+  vm_settings[VmSetting::Setting::START_COMMAND].getSetting().setStartCommand(
+#ifdef _WIN32
+      "vnc-demo.exe"
+#else
+      "./vnc-demo"
+#endif
+      " -listen localhost -rfbport 59000"
+    );
+  vm_settings[VmSetting::Setting::STOP_COMMAND].getSetting().setStopCommand(
+#ifdef _WIN32
+      "taskkill /f /im vnc-demo.exe"
+#else
+      "pkill vnc-demo"
+#endif
+    );
+  vm_settings[VmSetting::Setting::TURNS_ENABLED].getSetting().setTurnsEnabled(true);
+  vm_settings[VmSetting::Setting::TURN_TIME].getSetting().setTurnTime(30);
+  vm_settings[VmSetting::Setting::PROTOCOL].getSetting().setProtocol(VmSetting::Protocol::VNC);
+  auto guac_params = vm_settings[VmSetting::Setting::GUACAMOLE_PARAMETERS].getSetting().initGuacamoleParameters(2);
+  guac_params[0].setName("hostname");
+  guac_params[0].setValue("localhost");
+  guac_params[1].setName("port");
+  guac_params[1].setValue("59000");
+  CreateVm(GetNewVmId(), vm_settings);
 }
 
 void Database::LoadServerSettings(

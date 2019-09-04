@@ -251,6 +251,8 @@ static Timestamp GetCurrentTimestamp();
       const capnp::List<ServerSetting>::Reader settings_list);
 
  private:
+  void CreateTestVm();
+
   template<typename TReader>
   static std::vector<std::byte> CreateBlob(const TReader server_setting)
   {

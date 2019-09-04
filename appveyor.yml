@@ -29,6 +29,8 @@ build_script:
   # Vcpkg should automatically copy any necessary DLLs,
   # but it doesn't so manually copy them
   - ps: $vswhere = join-path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; $vspath = &$vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; $vspath = join-path $vspath 'Common7\Tools\vsdevcmd.bat'; $dumpbin = cmd /s /c """$vspath"">nul && where dumpbin.exe"; cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &$dumpbin /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
+  # Find and copy VNC demo into install directory
+  - ps: ls -rec -incl example.exe "$env:APPVEYOR_BUILD_FOLDER/build/" | select -first 1 | cp -dest "$env:APPVEYOR_BUILD_FOLDER/install/vnc-demo.exe"
 artifacts:
   - path: install/
     name: collab-vm-server
