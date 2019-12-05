@@ -81,6 +81,57 @@ class WebServerSocket : public std::enable_shared_from_this<
     });
   }
 
+  template<typename TSockets, typename TRequest>
+  bool SendFileResponse(std::shared_ptr<WebServerSocket>& self, TSockets& sockets, const TRequest& request, std::string_view path) {
+    {
+      auto err = std::error_code();
+      auto status = std::filesystem::status(path, err);
+      if (err || status.type() == std::filesystem::file_type::directory) {
+        return false;
+      }
+    }
+    auto err = boost::system::error_code();
+    auto file = beast::http::file_body::value_type();
+    file.open(path.data(), beast::file_mode::read, err);
+    if (err) {
+      return false;
+    }
+    auto resp = beast::http::response<beast::http::file_body>();
+    resp.result(beast::http::status::ok);
+    resp.version(request.version());
+    resp.set(beast::http::field::server, "collab-vm-server");
+    resp.set(beast::http::field::content_type, mime_type(path));
+    resp.body() = std::move(file);
+    try {
+      // prepare calls FileBody::write::init() which could fail
+      // and cause an exception to be thrown
+      resp.prepare_payload();
+      response_ = std::move(resp);
+
+      serializer_.emplace<beast::http::response_serializer<beast::http::file_body>>(
+        std::get<beast::http::response<
+          beast::http::file_body>>(response_));
+      beast::http::async_write(
+        sockets.socket,
+        std::get<beast::http::response_serializer<beast::http::file_body>>(serializer_),
+        socket_.wrap([ this, self = std::move(self) ](
+          auto& sockets,
+          const boost::system::error_code ec,
+          std::size_t bytes_transferred) mutable {
+            std::get<
+                beast::http::response<beast::http::file_body>>(
+                response_)
+              .body()
+              .close();
+            if (!ec) {
+              ReadHttpRequest(std::move(self));
+            }
+          }));
+    } catch (const boost::system::system_error&) {
+    }
+  return true;
+  }
+
   void ReadHttpRequest(std::shared_ptr<WebServerSocket>&& self) {
     // Request must be fully processed within 60 seconds.
     request_deadline_.expires_after(std::chrono::seconds(60));
@@ -133,61 +184,21 @@ class WebServerSocket : public std::enable_shared_from_this<
               }
 
               // Serve static content from doc root
-              std::filesystem::path path(
-                  request.target().substr(1).to_string());
+              std::filesystem::path path(request.target().substr(1));
               // Disallow relative paths
               if (std::none_of(path.begin(), path.end(), [](const auto& e) {
                     return e == ".." || e == ".";
                   })) {
-                    {
                 auto err = std::error_code();
                 path = std::filesystem::canonical(doc_root_ / path, err);
-                    }
-
-                auto err = boost::system::error_code();
                 // Verify that the path exists and is within the doc root
-                if (!err && path.compare(doc_root_) >= 0 &&
+                if ((!err && path.compare(doc_root_) >= 0 &&
                     std::equal(doc_root_.begin(), doc_root_.end(),
-                               path.begin())) {
-                  auto resp = beast::http::response<beast::http::file_body>();
-                  resp.result(beast::http::status::ok);
-                  resp.version(request.version());
-                  resp.set(beast::http::field::server, "collab-vm-server");
-                  resp.set(beast::http::field::content_type,
-                           mime_type(request.target()));
-                  auto file = beast::http::file_body::value_type();
-                  file.open(path.string().c_str(), beast::file_mode::read, err);
-                  if (!err) {
-                    resp.body() = std::move(file);
-                    try {
-                      // prepare calls FileBody::write::init() which could fail
-                      // and cause an exception to be thrown
-                      resp.prepare_payload();
-                      response_ = std::move(resp);
-
-                      serializer_.emplace<beast::http::response_serializer<beast::http::file_body>>(
-                          std::get<beast::http::response<
-	                          beast::http::file_body>>(response_));
-                      beast::http::async_write(
-                          sockets.socket,
-                          std::get<beast::http::response_serializer<beast::http::file_body>>(serializer_),
-                          socket_.wrap([ this, self = std::move(self) ](
-                              auto& sockets,
-                              const boost::system::error_code ec,
-                              std::size_t bytes_transferred) mutable {
-                            std::get<
-                                beast::http::response<beast::http::file_body>>(
-                                response_)
-                                .body()
-                                .close();
-                            if (!ec) {
-                              ReadHttpRequest(std::move(self));
-                            }
-                          }));
-                      return;
-                    } catch (const boost::system::system_error&) {
-                    }
-                  }
+                               path.begin())
+                  && SendFileResponse(self, sockets, request, path.string()))
+                  // Default to index.html when the file isn't found
+                  || SendFileResponse(self, sockets, request, (doc_root_ / "index.html").string())) {
+                  return;
                 }
               }
 
@@ -197,8 +208,7 @@ class WebServerSocket : public std::enable_shared_from_this<
               resp.version(request.version());
               resp.set(beast::http::field::server, "collab-vm-server");
               resp.set(beast::http::field::content_type, "text/html");
-              resp.body() = "The file '" + request.target().to_string() +
-                            "' was not found";
+              resp.body() = "The file '" + std::string(request.target()) + "' was not found";
               resp.prepare_payload();
               response_ = std::move(resp);
 
@@ -246,8 +256,7 @@ class WebServerSocket : public std::enable_shared_from_this<
             resp.version(request.version());
             resp.set(beast::http::field::server, "collab-vm-server");
             resp.set(beast::http::field::content_type, "text/html");
-            resp.body() = "The method '" + request.method_string().to_string() +
-                          "' is not allowed";
+            resp.body() = "The method '" + std::string(request.method_string()) + "' is not allowed";
             resp.prepare_payload();
             response_ = std::move(resp);
 
@@ -387,12 +396,12 @@ class WebServerSocket : public std::enable_shared_from_this<
   const IpAddress& GetIpAddress() { return ip_address_; }
 
   // Return a reasonable mime type based on the extension of a file.
-  boost::beast::string_view mime_type(boost::beast::string_view path) {
+  std::string_view mime_type(const std::string_view path) {
     using boost::beast::iequals;
     const auto ext = [&path] {
       const auto pos = path.rfind(".");
-      if (pos == boost::beast::string_view::npos)
-        return boost::beast::string_view{};
+      if (pos == std::string_view::npos)
+        return std::string_view{};
       return path.substr(pos);
     }();
     if (iequals(ext, ".htm"))
@@ -437,6 +446,8 @@ class WebServerSocket : public std::enable_shared_from_this<
       return "image/svg+xml";
     if (iequals(ext, ".svgz"))
       return "image/svg+xml";
+    if (iequals(ext, ".wasm"))
+      return "application/wasm";
     return "application/text";
   }
 
