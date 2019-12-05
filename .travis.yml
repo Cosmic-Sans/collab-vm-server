@@ -25,23 +25,44 @@ cache:
   directories:
     - ../vcpkg/
 script:
-- docker exec -it musl sh -c "apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
+  # - Update Alpine Linux package repository to edge
+  # - Install Alpine Linux packages
+  # - Create libintl.h to workaround a bug with the gettext vcpkg package
+  # - Install vcpkg packages
+  # - Build collab-vm-server
+  - docker exec -it musl sh -c "sed -i -e 's/v[[:digit:]]\..*\//edge\//g' /etc/apk/repositories && apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && mkdir -p /usr/include/ && touch /usr/include/libintl.h && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
 before_deploy:
-  - mkdir bin
-  - cp $(find build/ -name example -type f -print -quit) bin/vnc-demo
-  - cp build/collab-vm-server bin/
-  - tar -zcvf collab-vm-server.tar.gz bin/*
+  - mkdir $OUTPUT
+  - cp $(find build/ -name example -type f -print -quit) $OUTPUT/vnc-demo
+  - cp build/collab-vm-server $OUTPUT/
+  - tar -zcvf $OUTPUT.tar.gz $OUTPUT/
   - git tag --force prerelease HEAD
   - export TRAVIS_TAG=prerelease
+  # Move the tag to the most recent commit, but delete it first
+  # so GitHub updates the timestamp of the release
+  - git remote -vv
+  - git branch -vv
+  - git checkout "$TRAVIS_BRANCH"
+  - git config credential.helper "store --file=.git/credentials"
+  - echo "https://${GH_TOKEN}:@github.com" > .git/credentials
+  - git push --delete origin prerelease || true
+  - git tag --force prerelease HEAD
+  - git push --force --tags origin prerelease
 deploy:
   provider: releases
   tag_name: prerelease
-  file: collab-vm-server.tar.gz
+  file: $OUTPUT.tar.gz
   prerelease: true
   draft: false
   overwrite: true
   skip_cleanup: true
   on:
-    all_branches: true
+    branch: master
+    tags: false
   api_key:
     secure: Oen8hhOac4Un0ntolrtZEk41AVFl46hrV4hFOSiRifrJfbCMIkJHWaSM4urZBC1+9+PTH0gwDMHNG0EMo/gkHo7S0ov/C0V/tBC0XgVFjWSVaFkfni4cbYrIYD78r6Ci9c5zg7vP2+6tl0JcVcmRqo6rSEKa7Qc3wO5pnBP14LTiAA/ATP8IYdPJIKfnG4xR44ZXFV0Aetu/c97elYfWy+nOUDN1V81Tf3zjyToj6wqNncq20EmH47+JkP9lxjBvnGlx+UvQqKitvCqnAFDHdGAO8lPEYAuYGUdV7FpX4g3D5bx9D1/vSokP7Phit6lkCmTU/y4sxvm8T1i8EjpyNeevILhuhJEMDFFnghCRzVwBdxt4OV/KuafYQhBrtcPNi3ew0Osq0XBcw00qLaftXbp2sBW44GCHXTxnGhodQsEsYiBEc16inOtY4gxAL1dqdBRccE3RdRI4X96yf+eGCaaEyRp7YUwZUI2XTJop58Dzb0SMvzqYF6foDTunmrhRsdDrFEtgDmqHGaVyjKDmCr5Y7S//zNRBP9Fm7m2/AHa8YJ38lqhXdEyNm73+qOBkcOH7kTttMumCJxGg6P2c8ykmwo0jKkkUjLfcYMz7KLBYg4EYtNy8S9l3P9LVjILvcS8oJol3WnPk0M80lJj+lhcNXiBlf0+ItDJCOS3fxmE=
+env:
+  matrix:
+  - OUTPUT=collab-vm-linux64
+  global:
+    secure: cThjFkP6UjMk6O2qHmox7UlqOkpCwU+nm9aSXdOsB8KjNX8y2e90DqzEqLcWutiLinX3MfTdUDyYkESqarkXSeTlCKudbkQ+dWkenG8r0mSdzz+WvY+zPq+uEX+BBcK9OPEWdZADQOoByOE6gV2NeZMw+HM3EEo2aTziAwAeV7xFuXToMWArZNdbU74l0drRabh7nSP+63WegtzS+dUOhLKyFa8fRvKvDD57Ylr3lX4FzHrEsVHcj4uAcB+xPyZ4ACxTVFdTiQwlQ2SLYdN8xrYkCpBH9BvYK4EwUchIKvS4LD6FdqcnRmO/yfGOxw4X+8vrCVQYaaungEkt1//5PAeSpTUhjW1lXOJ+3biNLRA52U5Q7gT9qTVA+Yka4d/aUzoMyhJWjGv3ZYS3WWGY/EcLFbBFtPPaNyHxLSp7D4gWB5xWmhIG4plmUxEgGifaeVN1GhCz9F9L2lmn7YCqW7LrGslsaz6TT0dcXyhl+H7tTvaXYiu/HuLTGmmK9m18dwnWVc1/KNs4mRSV9fxeufiT0YaxyQ85XdH1NWxTMW/CNeUz/1qEAj0k67LsT50o8s0Vz6JXfrD9McusBCmYtnAiu/Khz7eh6fnoXHz4AkYQWw1DiaoTk3Wvq99tTTz6IZpzAO9NVeoLPK6K6CqRRiPKKhFNEu9Bxo/STDvQrjs=
