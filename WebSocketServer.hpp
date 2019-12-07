@@ -23,9 +23,9 @@ namespace CollabVm::Server {
 namespace asio = boost::asio;
 namespace beast = boost::beast;
 
-template <typename TServer, typename TThreadPool>
+template <typename TServer>
 class WebServerSocket : public std::enable_shared_from_this<
-                            WebServerSocket<TServer, TThreadPool>> {
+                            WebServerSocket<TServer>> {
  public:
   WebServerSocket(asio::io_context& io_context,
                   const std::filesystem::path& doc_root)
@@ -477,7 +477,7 @@ class WebServerSocket : public std::enable_shared_from_this<
     // asio::ssl::stream<asio::ip::tcp::socket&> stream_;
   };
 
-  StrandGuard<typename TThreadPool::Strand, SocketsWrapper> socket_;
+  StrandGuard<boost::asio::io_context::strand, SocketsWrapper> socket_;
 
   beast::flat_static_buffer<8192> buffer_;
 
@@ -508,98 +508,16 @@ class WebServerSocket : public std::enable_shared_from_this<
   std::function<void()> close_callback_;
 };
 
-template <bool TSingleThreaded>
-struct ThreadPool {
-  explicit ThreadPool(unsigned long threads) : io_context_(threads) {
-    assert(threads == 1);
-  }
-
-  struct NullStrand {
-    explicit NullStrand(boost::asio::io_context& io_context)
-        : io_context_(io_context) {}
-
-    boost::asio::io_context& context() const {
-      return io_context_;
-    }
-
-    static bool running_in_this_thread() { return true; }
-
-    template <typename TCompletionHandler, typename TAllocator>
-    void dispatch(TCompletionHandler&& handler, TAllocator) const {
-			boost::asio::dispatch(io_context_, std::forward<TCompletionHandler>(handler));
-    }
-
-    template <typename TCompletionHandler, typename TAllocator>
-    void post(TCompletionHandler&& handler, TAllocator) const {
-      boost::asio::post(io_context_, std::forward<TCompletionHandler>(handler));
-    }
-
-    template <typename TCompletionHandler, typename TAllocator>
-    void defer(TCompletionHandler&& handler, TAllocator) const {
-      boost::asio::post(io_context_, std::forward<TCompletionHandler>(handler));
-    }
-
-    template <typename THandler>
-    THandler&& wrap(THandler&& handler) {
-      return std::forward(handler);
-    }
-
-    void on_work_started() const {
-    }
-
-    void on_work_finished() const {
-    }
-   private:
-    asio::io_context& io_context_;
-  };
-
-  using Strand = NullStrand;
-
- protected:
-  void RunWorkers() { io_context_.run(); }
-  asio::io_context io_context_;
-};
-
-template <>
-struct ThreadPool<false> {
-  explicit ThreadPool(unsigned long threads)
-      : io_context_(threads), thread_count_(threads) {}
-  using Strand = asio::io_context::strand;
-
- protected:
-  void RunWorkers() {
-    auto threads = thread_count_;
-    // Decrement because the current thread will also become a worker
-    --threads;
-    threads_.reserve(threads);
-    for (auto i = 0u; i < threads; i++) {
-      threads_.emplace_back([&] { io_context_.run(); });
-    }
-
-    io_context_.run();
-
-    for (auto&& thread : threads_) {
-      thread.join();
-    }
-  }
-
-  asio::io_context io_context_;
-  unsigned long thread_count_;
-  std::vector<std::thread> threads_;
-};
-
-template <typename TThreadPool>
-class WebServer : public TThreadPool {
+class WebServer {
  public:
-  WebServer(const std::string& doc_root, const std::uint8_t threads)
-      : TThreadPool(threads),
-        stopping_(false),
-        sockets_(TThreadPool::io_context_),
-        acceptor_(TThreadPool::io_context_),
+  WebServer(const std::string& doc_root)
+      : sockets_(io_context_),
+        acceptor_(io_context_),
         doc_root_(doc_root),
-        interrupt_signal_(TThreadPool::io_context_, SIGINT, SIGTERM) {}
+        interrupt_signal_(io_context_, SIGINT, SIGTERM) {}
 
-  void Start(const std::string& host,
+  void Start(std::uint8_t threads,
+             const std::string& host,
              const std::uint16_t port) {
                {
     auto ec = std::error_code();
@@ -612,7 +530,7 @@ class WebServer : public TThreadPool {
     interrupt_signal_.async_wait([this](const auto error,
                                         const auto signal_number) { Stop(); });
 
-    auto resolver = asio::ip::tcp::resolver(TThreadPool::io_context_);
+    auto resolver = asio::ip::tcp::resolver(io_context_);
     auto error_code = boost::system::error_code();
     auto resolver_results = resolver.resolve(host, std::to_string(port), error_code);
     if (error_code || resolver_results.empty()) {
@@ -633,7 +551,19 @@ class WebServer : public TThreadPool {
 
       DoAccept();
 
-      TThreadPool::RunWorkers();
+      // Decrement because the current thread will also become a worker
+      --threads;
+      std::vector<std::thread> threads_;
+      threads_.reserve(threads);
+      for (auto i = 0u; i < threads; i++) {
+        threads_.emplace_back([&] { io_context_.run(); });
+      }
+
+      io_context_.run();
+
+      for (auto&& thread : threads_) {
+        thread.join();
+      }
     } catch (const boost::system::system_error& exception) {
       std::cout << "Failed to start server\n";
       std::cout << exception.what() << std::endl;
@@ -663,10 +593,11 @@ class WebServer : public TThreadPool {
   }
 
   boost::asio::io_context& GetContext() {
-    return TThreadPool::io_context_;
+    return io_context_;
   }
  protected:
-  using TSocket = WebServerSocket<WebServer, TThreadPool>;
+  boost::asio::io_context io_context_;
+  using TSocket = WebServerSocket<WebServer>;
 
   virtual std::shared_ptr<TSocket> CreateSocket(
       boost::asio::io_context& io_context,
@@ -707,7 +638,7 @@ class WebServer : public TThreadPool {
         return;
       }
       const auto socket_ptr = sockets.emplace_front(
-          CreateSocket(TThreadPool::io_context_, doc_root_));
+          CreateSocket(io_context_, doc_root_));
       const auto socket_it = sockets.cbegin();
       socket_ptr->SetCloseCallback(
           [this, socket_it] { RemoveSocket(socket_it); });
@@ -736,9 +667,9 @@ class WebServer : public TThreadPool {
     });
   }
 
-  bool stopping_;
+  bool stopping_ = false;
   StrandGuard<
-    typename TThreadPool::Strand,
+    boost::asio::io_context::strand,
     std::list<std::shared_ptr<TSocket>>> sockets_;
 
   boost::asio::ip::tcp::acceptor acceptor_;

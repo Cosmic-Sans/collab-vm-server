@@ -24,20 +24,6 @@
 #include "CollabVmServer.hpp"
 #include "WebSocketServer.hpp"
 
-template <typename TThreadPool>
-using Server =
-    CollabVm::Server::CollabVmServer<CollabVm::Server::WebServer<TThreadPool>>;
-
-template <bool SingleThreaded>
-void Start(const std::string& root,
-           const std::uint8_t threads,
-           const std::string host,
-           uint16_t port,
-           bool auto_start_vms) {
-  using ThreadPool = CollabVm::Server::ThreadPool<SingleThreaded>;
-  Server<ThreadPool>(root, threads).Start(host, port, auto_start_vms);
-}
-
 int main(int argc, char* argv[]) {
   using namespace clipp;
   using namespace std::string_literals;
@@ -111,9 +97,6 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
-  if (threads == 1) {
-    Start<true>(root, threads, host, port, auto_start_vms);
-  } else {
-    Start<false>(root, threads, host, port, auto_start_vms);
-  }
+  using Server = CollabVm::Server::CollabVmServer<CollabVm::Server::WebServer>;
+  Server(root).Start(threads, host, port, auto_start_vms);
 }

@@ -37,9 +37,8 @@ namespace CollabVm::Server
   template <typename TServer>
   class CollabVmServer final : public TServer
   {
-    using Strand = typename TServer::Strand;
     template <typename T>
-    using StrandGuard = StrandGuard<Strand, T>;
+    using StrandGuard = StrandGuard<boost::asio::io_context::strand, T>;
     using SessionId = Database::SessionId;
 
   public:
@@ -1640,8 +1639,8 @@ namespace CollabVm::Server
 
     using TServer::io_context_;
 
-    CollabVmServer(const std::string& doc_root, const std::uint8_t threads)
-      : TServer(doc_root, threads),
+    CollabVmServer(const std::string& doc_root)
+      : TServer(doc_root),
         settings_(io_context_, db_),
         sessions_(io_context_),
         guests_(io_context_),
@@ -1682,7 +1681,8 @@ namespace CollabVm::Server
         });
     }
 
-    void Start(const std::string& host,
+    void Start(const std::uint8_t threads,
+               const std::string& host,
                const std::uint16_t port,
                bool auto_start_vms) {
       if (auto_start_vms)
@@ -1701,7 +1701,7 @@ namespace CollabVm::Server
           });
         });
       }
-      TServer::Start(host, port);
+      TServer::Start(threads, host, port);
     }
 
     void Stop() override {
@@ -3302,7 +3302,7 @@ namespace CollabVm::Server
     RecaptchaVerifier recaptcha_;
     StrandGuard<VirtualMachinesList<CollabVmSocket<typename TServer::TSocket>>>
     virtual_machines_;
-    Strand login_strand_;
+    boost::asio::io_context::strand login_strand_;
     StrandGuard<UserChannel<Socket, typename CollabVmSocket<typename TServer::TSocket>::UserData>> global_chat_room_;
     std::uniform_int_distribution<std::uint32_t> guest_rng_;
     std::default_random_engine rng_{std::random_device()()};
