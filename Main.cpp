@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
   const auto cores = std::thread::hardware_concurrency();
   auto threads = std::max(cores / 2, 1u);
   auto port = 0u;
-  auto root = "."s;
+  auto root = "./web-app/"s;
   auto auto_start_vms = true;
   auto invalid_arguments = std::vector<std::string>();
   enum {
@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
       (option("--port", "-p") & integer("number", port))
         .doc("the port to listen on (default: random)"),
       (option("--root", "-r") & value("path", root))
-        .doc("the root directory to serve files from (default: '.')"),
+        .doc("the root directory to serve files from (default: '" + root + "')"),
       option("--cert", "-c") // TODO: use this argument
         .doc("path to PEM certificate to use for SSL/TLS"),
       option("--no-autostart", "-n").set(auto_start_vms, false)
