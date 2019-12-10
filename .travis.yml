@@ -33,6 +33,10 @@ script:
   - docker exec -it musl sh -c "sed -i -e 's/v[[:digit:]]\..*\//edge\//g' /etc/apk/repositories && apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && mkdir -p /usr/include/ && touch /usr/include/libintl.h && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
 before_deploy:
   - mkdir $OUTPUT
+  # Download and extract web-app
+  - wget https://github.com/Cosmic-Sans/collab-vm-web-app/releases/download/prerelease/web-app.tar.gz
+  - tar xfz web-app.tar.gz --directory=$OUTPUT/
+  # Find libvncserver example and copy it into the output directory
   - cp $(find build/ -name example -type f -print -quit) $OUTPUT/vnc-demo
   - cp build/collab-vm-server $OUTPUT/
   - tar -zcvf $OUTPUT.tar.gz $OUTPUT/

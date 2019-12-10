@@ -31,21 +31,24 @@ build_script:
   - ps: $vswhere = join-path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; $vspath = &$vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; $vspath = join-path $vspath 'Common7\Tools\vsdevcmd.bat'; $dumpbin = cmd /s /c """$vspath"">nul && where dumpbin.exe"; cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &$dumpbin /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
   # Find and copy VNC demo into install directory
   - ps: ls -rec -incl example.exe "$env:APPVEYOR_BUILD_FOLDER/build/" | select -first 1 | cp -dest "$env:APPVEYOR_BUILD_FOLDER/install/vnc-demo.exe"
+  # Download and extract web-app
+  - wsl wget https://github.com/Cosmic-Sans/collab-vm-web-app/releases/download/prerelease/web-app.tar.gz
+  - wsl tar xfz web-app.tar.gz --directory=../install/
 artifacts:
   - path: install/
-    name: collab-vm-server
+    name: collab-vm-win64
 before_deploy:
     # Move the tag to the most recent commit, but delete it first
     # so GitHub updates the timestamp of the release
-  - git tag --force prerelease HEAD
   - git config --global credential.helper store
   - ps: Add-Content "$HOME\.git-credentials" "https://$($env:access_token):x-oauth-basic@github.com`n"
   - git push --delete origin prerelease
+  - git tag --force prerelease HEAD
   - git push --force --tags origin prerelease
 deploy:
   provider: GitHub
   tag: prerelease
-  artifact: collab-vm-server
+  artifact: collab-vm-win64
   prerelease: true
   draft: false
   force_update: true
