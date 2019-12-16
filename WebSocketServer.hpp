@@ -137,6 +137,14 @@ class WebServerSocket : public std::enable_shared_from_this<
     request_deadline_.expires_after(std::chrono::seconds(60));
 
     socket_.dispatch([ this, self = std::move(self) ](auto& socket) {
+      buffer_.clear();
+      // Destruct and reconstruct the parser
+      ([](auto& response) {
+        using T = std::remove_reference_t<decltype(response)>;
+        response.~T();
+        new (&response) T;
+      })(parser_);
+
       beast::http::async_read_header(
           socket.socket, buffer_, parser_,
           socket_.wrap([ this, self = std::move(self) ](
