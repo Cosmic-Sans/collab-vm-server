@@ -61,6 +61,8 @@ struct UserInvite {
 
   Database();
 
+  void SetReCaptchaSettings();
+
   static Database::PasswordHash HashPassword(const std::string& password,
                                              const PasswordSalt& salt);
 

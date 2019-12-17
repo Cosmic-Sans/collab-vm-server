@@ -1,8 +1,8 @@
 enable_testing()
 
-add_executable(recaptcha Recaptcha.cpp)
-target_include_directories(recaptcha PUBLIC ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${PROJECT_SOURCE_DIR}/submodules/beast/include ${Boost_INCLUDE_DIRS})
-target_link_libraries(recaptcha OpenSSL::SSL)
+add_executable(recaptcha Captcha.cpp)
+target_include_directories(recaptcha PUBLIC ${COLLAB_VM_COMMON_BINARY_DIR} ${PROJECT_SOURCE_DIR} ${OPENSSL_INCLUDE_DIR} ${PROJECT_SOURCE_DIR}/submodules/beast/include ${Boost_INCLUDE_DIRS})
+target_link_libraries(recaptcha CapnProto::capnp OpenSSL::SSL)
 add_test(recaptcha recaptcha)
 
 add_executable(totp Totp.cpp)

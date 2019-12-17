@@ -27,7 +27,7 @@
 #include "SocketMessage.hpp"
 #include "Database/Database.h"
 #include "GuacamoleClient.hpp"
-#include "Recaptcha.hpp"
+#include "CaptchaVerifier.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
 #include "TurnController.hpp"
@@ -619,8 +619,8 @@ namespace CollabVm::Server
             const auto username = login_request.getUsername();
             const auto password = login_request.getPassword();
             const auto captcha_token = login_request.getCaptchaToken();
-            server_.recaptcha_.Verify(
-              captcha_token,
+            server_.captcha_verifier_.Verify(
+              captcha_token.cStr(),
               [
                 this, self = shared_from_this(),
                 buffer = std::move(buffer), username, password
@@ -859,8 +859,8 @@ namespace CollabVm::Server
               changed_settings
           ](auto& settings) mutable
             {
-              settings.UpdateServerSettings(
-                changed_settings);
+              settings.UpdateServerSettings(changed_settings);
+              server_.ApplySettings();
               auto config_message = SocketMessage::CopyFromMessageBuilder(
                 settings.GetServerSettingsMessageBuilder());
               // Broadcast the config changes to all other admins viewing the
@@ -1645,7 +1645,7 @@ namespace CollabVm::Server
         sessions_(io_context_),
         guests_(io_context_),
         ssl_ctx_(boost::asio::ssl::context::sslv23),
-        recaptcha_(io_context_, ssl_ctx_),
+        captcha_verifier_(io_context_, ssl_ctx_),
         virtual_machines_(io_context_,
                           io_context_,
                           db_, *this),
@@ -1656,13 +1656,7 @@ namespace CollabVm::Server
         guest_rng_(1'000, 99'999),
         vm_info_timer_(io_context_)
     {
-      settings_.dispatch([this](auto& settings)
-      {
-        const auto recaptcha_key = 
-          settings.GetServerSetting(ServerSetting::Setting::RECAPTCHA_KEY)
-                .getRecaptchaKey();
-        recaptcha_.SetRecaptchaKey(recaptcha_key);
-      });
+      ApplySettings();
       StartVmInfoUpdate();
     }
 
@@ -1727,6 +1721,15 @@ namespace CollabVm::Server
     }
 
   private:
+    void ApplySettings() {
+      settings_.dispatch([this](auto& settings)
+      {
+        captcha_verifier_.SetSettings(
+          settings.GetServerSetting(ServerSetting::Setting::CAPTCHA)
+							    .getCaptcha());
+      });
+    }
+
     template <typename TCallback>
     void CreateSession(
       std::shared_ptr<CollabVmSocket<typename TServer::TSocket>>&& socket,
@@ -3299,7 +3302,7 @@ namespace CollabVm::Server
     >
     guests_;
     boost::asio::ssl::context ssl_ctx_;
-    RecaptchaVerifier recaptcha_;
+    CaptchaVerifier captcha_verifier_;
     StrandGuard<VirtualMachinesList<CollabVmSocket<typename TServer::TSocket>>>
     virtual_machines_;
     boost::asio::io_context::strand login_strand_;

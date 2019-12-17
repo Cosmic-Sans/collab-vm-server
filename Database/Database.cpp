@@ -61,7 +61,28 @@ Database::Database() : db_("collab-vm.db") {
   if (created_new) {
     std::cout << "A new database has been created" << std::endl;
     CreateTestVm();
+    SetReCaptchaSettings();
   }
+}
+
+void Database::SetReCaptchaSettings() {
+  capnp::MallocMessageBuilder message_builder;
+  // Create default settings
+  const auto fields_count =
+    capnp::Schema::from<ServerSetting::Setting>().getUnionFields().size();
+  LoadServerSettings(
+    message_builder.initRoot<capnp::List<ServerSetting>>(fields_count));
+
+  auto settings = message_builder.initRoot<capnp::List<ServerSetting>>(1);
+  auto captcha_settings = settings[0].initSetting().initCaptcha();
+  captcha_settings.setEnabled(false);
+  captcha_settings.setHttps(true);
+  captcha_settings.setUrlHost("google.com");
+  captcha_settings.setUrlPort(443);
+  captcha_settings.setUrlPath("/recaptcha/api/siteverify");
+  captcha_settings.setPostParams("secret=6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe&response=$TOKEN");
+  captcha_settings.setValidJSONVariableName("success");
+  SaveServerSettings(settings);
 }
 
 void Database::CreateTestVm() {
