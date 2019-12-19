@@ -1892,10 +1892,13 @@ namespace CollabVm::Server
         add_admin_user.setChannel(GetId());
         AddUserToList(user_data, add_admin_user.initUser());
 
-        ForEachUser([user_message=std::move(user_message),
+        ForEachUser([excluded_user = user.get(), user_message=std::move(user_message),
                      admin_user_message=std::move(admin_user_message)]
           (const auto& user_data, auto& user)
           {
+            if (&user == excluded_user) {
+              return;
+            }
             user.QueueMessage(
               user_data.IsAdmin() ? admin_user_message : user_message);
           });
