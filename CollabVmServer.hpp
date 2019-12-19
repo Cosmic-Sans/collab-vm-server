@@ -1141,7 +1141,11 @@ namespace CollabVm::Server
         case CollabVmClientMessage::Message::VALIDATE_INVITE:
         {
             const auto invite_id = message.getValidateInvite();
-            auto [is_valid, username] = server_.db_.ValidateInvite({reinterpret_cast<const std::byte*>(invite_id.begin()), reinterpret_cast<const std::byte*>(invite_id.end())});
+            const auto invite_id_length = std::distance(reinterpret_cast<const std::byte*>(invite_id.begin()), reinterpret_cast<const std::byte*>(invite_id.end()));
+            if (invite_id_length != Database::invite_id_len) {
+              break;
+            }
+            auto [is_valid, username] = server_.db_.ValidateInvite({reinterpret_cast<const std::byte*>(invite_id.begin()), invite_id_length});
             auto socket_message = SocketMessage::CreateShared();
             auto response = socket_message->GetMessageBuilder()
                           .initRoot<CollabVmServerMessage>()
