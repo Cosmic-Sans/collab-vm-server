@@ -339,7 +339,7 @@ namespace CollabVm::Server
                   QueueMessage(std::move(socket_message));
                   return;
                 }
-                SetUsername(std::string(new_username));
+                SetUserData(std::string(new_username));
               });
             break;
           }
@@ -1561,27 +1561,33 @@ namespace CollabVm::Server
             is_username_taken =
               !std::get<bool>(guests.insert({ username, shared_from_this() }));
           } while (is_username_taken);
-          SetUsername(username);
+          SetUserData(username);
           continuation(username);
         });
       }
 
       template<typename TString>
-      void SetUsername(TString&& username) {
+      void SetUserData(TString&& username) {
         static_assert(std::is_convertible_v<TString, std::string>);
+        const auto user_type =
+            is_logged_in_ ?
+              is_admin_ ? CollabVmServerMessage::UserType::ADMIN
+                : CollabVmServerMessage::UserType::REGULAR
+              : CollabVmServerMessage::UserType::GUEST;
         username_.dispatch(
-          [this, self = shared_from_this(), username = std::forward<TString>(username)]
+          [this, self = shared_from_this(), username = std::forward<TString>(username), user_type]
           (auto& current_username) mutable {
             std::swap(current_username, username);
             if (!username.empty() && (connected_vm_id_ || is_in_global_chat_))
             {
               auto update_username = 
-                [this, self = shared_from_this(), new_username=current_username]
+                [this, self = shared_from_this(), new_username=current_username, user_type]
                 (auto& channel) mutable {
                   auto user_data = channel.GetUserData(self);
                   if (!user_data.has_value()) {
                     return;
                   }
+                  user_data->get().user_type = user_type;
                   auto& current_username = user_data.value().get().username;
                   auto message = SocketMessage::CreateShared();
                   auto username_change = message->GetMessageBuilder()
@@ -1748,9 +1754,9 @@ namespace CollabVm::Server
             // TODO: Handle error
             return;
           }
-          socket->SetUsername(correct_username);
           socket->is_logged_in_ = true;
           socket->is_admin_ = is_admin;
+          socket->SetUserData(correct_username);
           // TODO: Can SetSessionId return a reference?
           new_session_id =
             socket->SetSessionId(sessions, std::move(new_session_id));
