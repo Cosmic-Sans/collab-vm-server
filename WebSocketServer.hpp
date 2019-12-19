@@ -82,25 +82,31 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
   template<typename TSockets, typename TRequest>
-  bool SendFileResponse(std::shared_ptr<WebServerSocket>& self, TSockets& sockets, const TRequest& request, std::string_view path) {
-    {
-      auto err = std::error_code();
-      auto status = std::filesystem::status(path, err);
-      if (err || status.type() == std::filesystem::file_type::directory) {
-        return false;
-      }
+  bool SendFileResponse(std::shared_ptr<WebServerSocket>& self, TSockets& sockets, const TRequest& request, std::filesystem::path path) {
+    // Verify that the path exists within the doc root and is not a directory
+    auto err = std::error_code();
+    path = std::filesystem::canonical(doc_root_ / path, err);
+    if (err || path.compare(doc_root_) < 0 ||
+          !std::equal(doc_root_.begin(), doc_root_.end(), path.begin())) {
+      return false;
     }
-    auto err = boost::system::error_code();
+    auto status = std::filesystem::status(path, err);
+    if (err || status.type() == std::filesystem::file_type::directory) {
+      return false;
+    }
+
+    auto file_open_error = boost::system::error_code();
     auto file = beast::http::file_body::value_type();
-    file.open(path.data(), beast::file_mode::read, err);
-    if (err) {
+    auto path_string = path.string();
+    file.open(path_string.c_str(), beast::file_mode::read, file_open_error);
+    if (file_open_error) {
       return false;
     }
     auto resp = beast::http::response<beast::http::file_body>();
     resp.result(beast::http::status::ok);
     resp.version(request.version());
     resp.set(beast::http::field::server, "collab-vm-server");
-    resp.set(beast::http::field::content_type, mime_type(path));
+    resp.set(beast::http::field::content_type, mime_type(path_string));
     resp.body() = std::move(file);
     try {
       // prepare calls FileBody::write::init() which could fail
@@ -128,8 +134,9 @@ class WebServerSocket : public std::enable_shared_from_this<
             }
           }));
     } catch (const boost::system::system_error&) {
+      return false;
     }
-  return true;
+    return true;
   }
 
   void ReadHttpRequest(std::shared_ptr<WebServerSocket>&& self) {
@@ -197,15 +204,12 @@ class WebServerSocket : public std::enable_shared_from_this<
               if (std::none_of(path.begin(), path.end(), [](const auto& e) {
                     return e == ".." || e == ".";
                   })) {
-                auto err = std::error_code();
-                path = std::filesystem::canonical(doc_root_ / path, err);
-                // Verify that the path exists and is within the doc root
-                if ((!err && path.compare(doc_root_) >= 0 &&
-                    std::equal(doc_root_.begin(), doc_root_.end(),
-                               path.begin())
-                  && SendFileResponse(self, sockets, request, path.string()))
-                  // Default to index.html when the file isn't found
-                  || SendFileResponse(self, sockets, request, (doc_root_ / "index.html").string())) {
+                // First try the path without modifying it
+                if ((!path.empty() && (SendFileResponse(self, sockets, request, path)
+                  // Then try appending .html to the first part
+                  || SendFileResponse(self, sockets, request, (path = *path.begin(), path += ".html"))))
+                  // Default to index.html if the previous attempts failed
+                  || SendFileResponse(self, sockets, request, "index.html")) {
                   return;
                 }
               }
