@@ -702,10 +702,10 @@ namespace CollabVm::Server
           }
         case CollabVmClientMessage::Message::ACCOUNT_REGISTRATION_REQUEST:
           {
-            server_.settings_.dispatch([
-                this, self = TSocket::shared_from_this(),
-                buffer = std::move(buffer), message
-              ](auto& settings) mutable
+            auto create_account =
+              [this, self = TSocket::shared_from_this(),
+                buffer = std::move(buffer), message]
+                (auto& settings) mutable
               {
                 auto register_request = message.
                   getAccountRegistrationRequest();
@@ -816,6 +816,31 @@ namespace CollabVm::Server
                     session.setUsername(username);
                     QueueMessage(std::move(response));
                   });
+              };
+            auto register_request = message.getAccountRegistrationRequest();
+            if (register_request.getInviteId().size()) {
+              // Captchas are not required for invites
+              server_.settings_.dispatch(std::move(create_account));
+              break;
+            }
+            server_.captcha_verifier_.Verify(
+              register_request.getCaptchaToken().cStr(),
+              [this, create_account = std::move(create_account)]
+              (bool is_valid) mutable
+              {
+                if (is_valid) {
+                  server_.settings_.dispatch(std::move(create_account));
+                  return;
+                }
+                auto response = SocketMessage::CreateShared();
+                auto& message_builder = response->GetMessageBuilder();
+                auto registration_result = message_builder.initRoot<
+                  CollabVmServerMessage::Message>()
+                  .initAccountRegistrationResponse().initResult();
+                registration_result.setErrorStatus(
+                  CollabVmServerMessage::RegisterAccountResponse::
+                  RegisterAccountError::INVALID_CAPTCHA_TOKEN);
+                QueueMessage(std::move(response));
               });
             break;
           }
