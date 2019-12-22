@@ -1657,11 +1657,7 @@ namespace CollabVm::Server
       template<typename TString>
       void SetUserData(TString&& username) {
         static_assert(std::is_convertible_v<TString, std::string>);
-        const auto user_type =
-            is_logged_in_ ?
-              is_admin_ ? CollabVmServerMessage::UserType::ADMIN
-                : CollabVmServerMessage::UserType::REGULAR
-              : CollabVmServerMessage::UserType::GUEST;
+        const auto user_type = GetUserType();
         username_.dispatch(
           [this, self = shared_from_this(), username = std::forward<TString>(username), user_type]
           (auto& current_username) mutable {
