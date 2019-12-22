@@ -158,6 +158,11 @@ namespace CollabVm::Server
 
       void OnConnect() override
       {
+        server_.settings_.dispatch([this, self = shared_from_this()](auto& settings) {
+          is_captcha_required_ =
+            settings.GetServerSetting(ServerSetting::Setting::CAPTCHA_REQUIRED)
+                    .getCaptchaRequired();
+        });
       }
 
       void OnMessage(
@@ -201,6 +206,7 @@ namespace CollabVm::Server
                 auto connectSuccess = connect_result.initSuccess();
                 channel.GetChatRoom().GetChatHistory(connectSuccess);
                 connectSuccess.setUsername(username);
+                connectSuccess.setCaptchaRequired(is_captcha_required_);
                 QueueMessage(std::move(socket_message));
                 UserData user_data{ username, GetUserType(), TSocket::GetIpAddress().AsBytes() };
                 channel.AddUser(user_data, std::move(self));
@@ -261,9 +267,20 @@ namespace CollabVm::Server
           });
           break;
         }
+        case CollabVmClientMessage::Message::CAPTCHA_COMPLETED:
+        {
+          server_.captcha_verifier_.Verify(
+            message.getCaptchaCompleted().cStr(),
+            [this, self = shared_from_this(),
+              buffer = std::move(buffer)](bool is_valid)
+          {
+            is_captcha_required_ = !is_valid;
+          });
+          break;
+        }
         case CollabVmClientMessage::Message::TURN_REQUEST:
         {
-          if (!connected_vm_id_)
+          if (!connected_vm_id_ || is_captcha_required_)
           {
             break;
           }
@@ -283,7 +300,7 @@ namespace CollabVm::Server
         }
         case CollabVmClientMessage::Message::GUAC_INSTR:
         {
-          if (!connected_vm_id_)
+          if (!connected_vm_id_ || is_captcha_required_)
           {
             break;
           }
@@ -308,6 +325,10 @@ namespace CollabVm::Server
         }
         case CollabVmClientMessage::Message::CHANGE_USERNAME:
           {
+            if (is_captcha_required_)
+            {
+              break;
+            }
             if (is_logged_in_)
             {
               // Registered users can't change their usernames
@@ -374,6 +395,10 @@ namespace CollabVm::Server
           break;
         case CollabVmClientMessage::Message::CHAT_MESSAGE:
         {
+          if (is_captcha_required_)
+          {
+            break;
+          }
           const auto chat_message = message.getChatMessage();
           const auto message_len = chat_message.getMessage().size();
           if (!message_len || message_len > max_chat_message_len)
@@ -1667,6 +1692,7 @@ namespace CollabVm::Server
       bool is_viewing_server_config = false;
       bool is_viewing_vm_list_ = false;
       bool is_in_global_chat_ = false;
+      bool is_captcha_required_ = false;
       std::uint32_t connected_vm_id_ = 0;
       StrandGuard<std::string> username_;
       friend class CollabVmServer;
