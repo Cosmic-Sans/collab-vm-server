@@ -15,8 +15,6 @@
 #include <string>
 #include <utility>
 
-#include <openssl/ssl.h>
-
 namespace CollabVm::Server {
 class CaptchaVerifier {
   struct VerifyRequest {
@@ -118,42 +116,6 @@ class CaptchaVerifier {
     });
   }
 private:
-  int SSL_SESSION_print_keylog(const char* filename)
-  {
-    BIO* bp = BIO_new_file(filename, "a");
-
-    size_t i;
-
-    auto ssl = stream_.native_handle();
-    auto x = ssl->session;
-    if (x == NULL)
-      goto err;
-    if (x->session_id_length == 0 || x->master_key_length == 0)
-      goto err;
-
-    if (BIO_puts(bp, "CLIENT_RANDOM ") <= 0)
-      goto err;
-
-    for (i = 0; i < std::size(ssl->s3->client_random); i++) {
-      if (BIO_printf(bp, "%02X", ssl->s3->client_random[i]) <= 0)
-        goto err;
-    }
-    if (BIO_puts(bp, " ") <= 0)
-      goto err;
-    for (i = 0; i < x->master_key_length; i++) {
-      if (BIO_printf(bp, "%02X", x->master_key[i]) <= 0)
-        goto err;
-    }
-    if (BIO_puts(bp, "\n") <= 0)
-      goto err;
-
-    BIO_free(bp);
-    return 1;
-  err:
-    BIO_free(bp);
-    return 0;
-  }
-
   void Connect() {
     boost::asio::dispatch(strand_, [this]() {
       if (pending_settings_) {
@@ -188,7 +150,6 @@ private:
                         return;
                       }
 
-                      SSL_SESSION_print_keylog("ssl-keys.txt");
                       SendRequest();
                     });
               });
