@@ -1269,6 +1269,23 @@ namespace CollabVm::Server
             });
           break;
         }
+        case CollabVmClientMessage::Message::SEND_CAPTCHA:
+        {
+          if (!is_admin_)
+          {
+            break;
+          }
+          const auto send_captcha = message.getSendCaptcha();
+          const auto username = send_captcha.getUsername();
+          server_.GetUser(
+            std::string_view(username.cStr(), username.size()),
+            send_captcha.getChannel(),
+            [buffer = std::move(buffer)](auto& user) {
+              auto& [socket, user_data] = user;
+              socket->is_captcha_required_ = true;
+            });
+          break;
+        }
         case CollabVmClientMessage::Message::PAUSE_TURN_TIMER:
         {
           if (is_admin_ && connected_vm_id_)
@@ -1824,6 +1841,39 @@ namespace CollabVm::Server
             }
           }
           callback(correct_username, new_session_id);
+        });
+    }
+
+    template<typename TCallback>
+    void GetChannel(const std::uint32_t id, TCallback&& callback) {
+      if (id == global_channel_id)
+      {
+        global_chat_room_.dispatch(std::forward<TCallback>(callback));
+        return;
+      }
+      virtual_machines_.dispatch(
+        [id, callback = std::forward<TCallback>(callback)](auto& virtual_machines) {
+          if (const auto virtual_machine = virtual_machines.GetAdminVirtualMachine(id);
+              virtual_machine) {
+            virtual_machine->GetUserChannel(std::move(callback));
+          }
+        });
+    }
+
+    template<typename TCallback>
+    void GetUser(const std::string_view username,
+                 const std::uint32_t channel_id,
+                 TCallback&& callback) {
+      GetChannel(channel_id,
+        [username, callback = std::forward<TCallback>(callback)](auto& channel) {
+          const auto& users = channel.GetUsers();
+          const auto user = std::find_if(users.cbegin(), users.cend(), [username](auto& user) {
+            auto& [socket, user_data] = user;
+            return user_data.username == username;
+          });
+          if (user != users.cend()) {
+            callback(*user);
+          }
         });
     }
 
