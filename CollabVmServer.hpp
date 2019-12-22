@@ -1286,6 +1286,23 @@ namespace CollabVm::Server
             });
           break;
         }
+        case CollabVmClientMessage::Message::KICK_USER:
+        {
+          if (!is_admin_)
+          {
+            break;
+          }
+          const auto kick_user = message.getKickUser();
+          const auto username = kick_user.getUsername();
+          server_.GetUser(
+            std::string_view(username.cStr(), username.size()),
+            kick_user.getChannel(),
+            [buffer = std::move(buffer)](auto& user) {
+              auto& [socket, user_data] = user;
+              socket->Close();
+            });
+          break;
+        }
         case CollabVmClientMessage::Message::PAUSE_TURN_TIMER:
         {
           if (is_admin_ && connected_vm_id_)
