@@ -1309,6 +1309,12 @@ namespace CollabVm::Server
             [buffer = std::move(buffer)](auto& user) {
               auto& [socket, user_data] = user;
               socket->is_captcha_required_ = true;
+              auto socket_message = SocketMessage::CreateShared();
+              auto& message_builder = socket_message->GetMessageBuilder();
+              message_builder.initRoot<CollabVmServerMessage>()
+                             .initMessage()
+                             .setCaptchaRequired(true);
+              socket->QueueMessage(std::move(socket_message));
             });
           break;
         }
