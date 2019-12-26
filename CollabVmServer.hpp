@@ -769,7 +769,20 @@ namespace CollabVm::Server
                   CollabVmServerMessage::Message>()
                   .initAccountRegistrationResponse().initResult();
                 auto valid_username = std::string();
-                if (settings
+                if (invite_id.size()) {
+                  auto is_valid = false;
+                  std::tie(is_valid, valid_username) =
+                    server_.db_.ValidateInvite(
+                      {reinterpret_cast<const std::byte*>(invite_id.begin()),
+                      reinterpret_cast<const std::byte*>(invite_id.end())});
+                  if (!is_valid || valid_username.empty() ^ requested_username.size()) {
+                    registration_result.setErrorStatus(
+                      CollabVmServerMessage::RegisterAccountResponse::
+                      RegisterAccountError::INVITE_INVALID);
+                    QueueMessage(std::move(response));
+                    return;
+                  }
+                } else if (settings
                      .GetServerSetting(
                        ServerSetting::Setting::
                        ALLOW_ACCOUNT_REGISTRATION)
@@ -787,21 +800,7 @@ namespace CollabVm::Server
                     }
                   valid_username = requested_username;
                 } else {
-                  if (!invite_id.size()) {
-                    return;
-                  }
-                  auto is_valid = false;
-                  std::tie(is_valid, valid_username) =
-                    server_.db_.ValidateInvite(
-                      {reinterpret_cast<const std::byte*>(invite_id.begin()),
-                      reinterpret_cast<const std::byte*>(invite_id.end())});
-                  if (!is_valid || valid_username.empty() ^ requested_username.size()) {
-                    registration_result.setErrorStatus(
-                      CollabVmServerMessage::RegisterAccountResponse::
-                      RegisterAccountError::INVITE_INVALID);
-                    QueueMessage(std::move(response));
-                    return;
-                  }
+                  return;
                 }
                 if (register_request.getPassword().size() >
                   Database::max_password_len)
