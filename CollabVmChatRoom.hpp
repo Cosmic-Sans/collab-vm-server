@@ -11,7 +11,7 @@ class CollabVmChatRoom {
   std::uint8_t next_message_offset_;
   capnp::MallocMessageBuilder history_message_builder_;
   CollabVmServerMessage::ChannelChatMessages::Builder channel_messages_;
-  constexpr static auto max_chat_message_history = 20;
+  constexpr static auto max_chat_message_history = 100;
 public:
 
   explicit CollabVmChatRoom(const std::uint32_t id)
@@ -46,7 +46,7 @@ public:
     channel_messages_.setCount(
       (std::min)(channel_messages_.getCount() + 1, max_chat_message_history));
     chat_message = channel_messages_.getMessages()[next_message_offset_];
-    next_message_offset_ = next_message_offset_ + 1 % max_chat_message_history;
+    next_message_offset_ = (next_message_offset_ + 1) % max_chat_message_history;
     const auto message_body = chat_message.getMessage();
     copyStringToTextBuilder(message, message_body);
     copyStringToTextBuilder(username, chat_message.getSender());
@@ -66,13 +66,11 @@ public:
       CollabVmServerMessage::ChannelConnectResponse::ConnectInfo::Builder
       connect_success) {
     const auto messages_count = channel_messages_.getCount();
-    if (messages_count == max_chat_message_history) {
-      connect_success.setChatMessages(channel_messages_.getMessages());
-    } else {
-      auto messages = connect_success.initChatMessages(messages_count);
-      for (auto i = 0u; i < messages_count; i++) {
-        messages.setWithCaveats(i, channel_messages_.getMessages()[i]);
-      }
+    auto message_index = messages_count == max_chat_message_history ? next_message_offset_ : 0;
+    auto messages = connect_success.initChatMessages(messages_count);
+    for (auto i = 0; i < messages_count; i++) {
+      messages.setWithCaveats(i, channel_messages_.getMessages()[message_index]);
+      message_index = (message_index + 1) % channel_messages_.getMessages().size();
     }
   }
 
