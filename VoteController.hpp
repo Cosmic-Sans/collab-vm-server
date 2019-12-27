@@ -113,7 +113,7 @@ public:
     }
     case VoteState::kVoting:
     {
-      if (data.voted_limit || ++data.voted_amount >= Shared::vote_limit) {
+      if (data.voted_limit || ++data.voted_amount >= Common::vote_limit) {
         data.voted_limit = true;
         return false;
       }

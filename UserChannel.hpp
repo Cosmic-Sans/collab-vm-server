@@ -210,8 +210,8 @@ private:
   std::unordered_map<std::shared_ptr<TClient>, TUserData> users_;
   std::uint32_t admins_count_ = 0;
   CollabVmChatRoom<TClient,
-	                 CollabVm::Shared::max_username_len,
-                   CollabVm::Shared::max_chat_message_len> chat_room_;
+	                 CollabVm::Common::max_username_len,
+                   CollabVm::Common::max_chat_message_len> chat_room_;
   capnp::MallocMessageBuilder message_builder_;
 };
 }

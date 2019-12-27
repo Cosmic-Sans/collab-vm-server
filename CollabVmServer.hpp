@@ -362,7 +362,7 @@ namespace CollabVm::Server
               break;
             }
             const auto new_username = message.getChangeUsername();
-            if (!CollabVm::Shared::ValidateUsername({
+            if (!CollabVm::Common::ValidateUsername({
               new_username.begin(), new_username.size()
             }))
             {
@@ -428,7 +428,7 @@ namespace CollabVm::Server
           }
           const auto chat_message = message.getChatMessage();
           const auto message_len = chat_message.getMessage().size();
-          if (!message_len || message_len > Shared::max_chat_message_len)
+          if (!message_len || message_len > Common::max_chat_message_len)
           {
             break;
           }
@@ -789,7 +789,7 @@ namespace CollabVm::Server
                        ALLOW_ACCOUNT_REGISTRATION)
                      .getAllowAccountRegistration())
                 {
-                  if (!Shared::ValidateUsername({
+                  if (!Common::ValidateUsername({
                       requested_username.begin(), requested_username.size()
                     }))
                     {
