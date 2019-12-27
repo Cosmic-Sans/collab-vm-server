@@ -361,6 +361,11 @@ namespace CollabVm::Server
               // Registered users can't change their usernames
               break;
             }
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_username_change_ < Common::username_change_rate_limit)
+            {
+              break;
+            }
             const auto new_username = message.getChangeUsername();
             if (!CollabVm::Common::ValidateUsername({
               new_username.begin(), new_username.size()
@@ -368,26 +373,31 @@ namespace CollabVm::Server
             {
               break;
             }
-            server_.guests_.dispatch([
-                this, self = shared_from_this(), buffer = std::move(
-                  buffer),
-                new_username
-              ](auto& guests)
-              {
-                auto guests_it = guests.find(new_username);
-                auto socket_message = SocketMessage::CreateShared();
-                auto message = socket_message->GetMessageBuilder()
-                                             .initRoot<
-                                               CollabVmServerMessage
-                                             >()
-                                             .initMessage();
-                if (guests_it != guests.end())
-                {
-                  message.setUsernameTaken();
-                  QueueMessage(std::move(socket_message));
+            username_.dispatch(
+              [this, self = shared_from_this(), buffer = std::move(buffer), new_username]
+              (auto& username) {
+                if (username == std::string_view(new_username.cStr(), new_username.size())) {
                   return;
                 }
-                SetUserData(std::string(new_username));
+                server_.guests_.dispatch(
+                  [this, self = shared_from_this(),
+                  buffer = std::move(buffer), new_username, current_username = username](auto& guests)
+                {
+                  const auto is_username_taken =
+                    !std::get<bool>(guests.insert({ new_username, shared_from_this() }));
+                  if (is_username_taken)
+                  {
+                    auto socket_message = SocketMessage::CreateShared();
+                    auto message = socket_message->GetMessageBuilder()
+                      .initRoot<CollabVmServerMessage>()
+                      .initMessage();
+                    message.setUsernameTaken();
+                    QueueMessage(std::move(socket_message));
+                    return;
+                  }
+                  guests.erase(current_username);
+                  SetUserData(std::string(new_username));
+                });
               });
             break;
           }
@@ -1760,6 +1770,7 @@ namespace CollabVm::Server
       bool is_in_global_chat_ = false;
       bool is_captcha_required_ = false;
       std::chrono::time_point<std::chrono::steady_clock> last_chat_message_;
+      std::chrono::time_point<std::chrono::steady_clock> last_username_change_;
       std::uint32_t connected_vm_id_ = 0;
       StrandGuard<std::string> username_;
       friend class CollabVmServer;
