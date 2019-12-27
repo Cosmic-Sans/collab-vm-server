@@ -714,6 +714,7 @@ namespace CollabVm::Server
                             reinterpret_cast<const kj::byte*>(session_id.data()),
                             session_id.size()));
                           session.setUsername(username);
+                          session.setIsAdmin(is_admin_);
                           QueueMessage(std::move(socket_message));
                         });
                     }
