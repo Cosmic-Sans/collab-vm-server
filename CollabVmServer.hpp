@@ -428,10 +428,13 @@ namespace CollabVm::Server
           }
           const auto chat_message = message.getChatMessage();
           const auto message_len = chat_message.getMessage().size();
-          if (!message_len || message_len > Common::max_chat_message_len)
+          const auto now = std::chrono::steady_clock::now();
+          if (!message_len || message_len > Common::max_chat_message_len
+              || now - last_chat_message_ < Common::chat_rate_limit)
           {
             break;
           }
+          last_chat_message_ = now;
           username_.dispatch(
             [this, self = shared_from_this(),
             buffer = std::move(buffer), chat_message]
@@ -1756,6 +1759,7 @@ namespace CollabVm::Server
       bool is_viewing_vm_list_ = false;
       bool is_in_global_chat_ = false;
       bool is_captcha_required_ = false;
+      std::chrono::time_point<std::chrono::steady_clock> last_chat_message_;
       std::uint32_t connected_vm_id_ = 0;
       StrandGuard<std::string> username_;
       friend class CollabVmServer;
