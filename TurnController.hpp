@@ -91,7 +91,7 @@ public:
     return true;
   }
 
-  bool RemoveUser(TUserPtr user)
+  bool RemoveUser(const TUserPtr& user)
   {
     if (!user->turn_queue_position_.has_value())
     {

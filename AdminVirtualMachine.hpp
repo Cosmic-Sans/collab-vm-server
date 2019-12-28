@@ -249,6 +249,7 @@ struct AdminVirtualMachine
     }
 
     void OnRemoveUser(const std::shared_ptr<TClient>& user) {
+      VmTurnController::RemoveUser(user);
     }
 
     void OnCurrentUserChanged(
