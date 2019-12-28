@@ -199,6 +199,25 @@ namespace CollabVm::Server
                 [this, self = shared_from_this(), username]
               (auto& channel) mutable
               {
+                LeaveVmList();
+                if (connected_vm_id_)
+                {
+                  server_.virtual_machines_.dispatch(
+                    [channel_id = connected_vm_id_, self = shared_from_this()]
+                    (auto& virtual_machines) mutable
+                    {
+                      const auto virtual_machine = virtual_machines.
+                        GetAdminVirtualMachine(channel_id);
+                      if (!virtual_machine) {
+                        return;
+                      }
+                      virtual_machine->GetUserChannel([self = std::move(self)]
+                        (auto& channel) {
+                          channel.RemoveUser(std::move(self));
+                        });
+                    });
+                }
+                connected_vm_id_ = channel.GetId();
                 auto socket_message = SocketMessage::CreateShared();
                 auto& message_builder = socket_message->GetMessageBuilder();
                 auto connect_result =
@@ -228,20 +247,10 @@ namespace CollabVm::Server
               }
               else
               {
-                if (connected_vm_id_)
-                {
-                  return;
-                }
-                connected_vm_id_ = channel_id;
-                LeaveVmList();
-                server_.virtual_machines_.dispatch([
-                  this, self = shared_from_this(), channel_id,
-                    connect_to_channel = std::move(connect_to_channel)
-                ](auto& virtual_machines) mutable
+                server_.virtual_machines_.dispatch(
+                  [this, channel_id, connect_to_channel = std::move(connect_to_channel)]
+                  (auto& virtual_machines) mutable
                   { 
-                    if (is_viewing_vm_list_) {
-                      virtual_machines.RemoveVmListViewer(self);
-                    }
                     const auto virtual_machine = virtual_machines.
                       GetAdminVirtualMachine(channel_id);
                     if (!virtual_machine)
@@ -257,8 +266,27 @@ namespace CollabVm::Server
                       QueueMessage(std::move(socket_message));
                       return;
                     }
-                    virtual_machine->GetUserChannel(
-                      std::move(connect_to_channel));
+                    virtual_machine->GetSettings(
+                      [this, virtual_machine, connect_to_channel=std::move(connect_to_channel)]
+                      (auto& settings) {
+                        if (settings.GetSetting(VmSetting::Setting::DISALLOW_GUESTS)
+                                    .getDisallowGuests()
+                            && !is_logged_in_)
+                        {
+                          auto socket_message = SocketMessage::CreateShared();
+                          auto& message_builder = socket_message->GetMessageBuilder();
+                          auto connect_result =
+                            message_builder.initRoot<CollabVmServerMessage>()
+                            .initMessage()
+                            .initConnectResponse()
+                            .initResult();
+                          connect_result.setFail();
+                          QueueMessage(std::move(socket_message));
+                          return;
+                        }
+
+                        virtual_machine->GetUserChannel(std::move(connect_to_channel));
+                      });
                   });
               }
             };

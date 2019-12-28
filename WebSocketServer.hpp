@@ -338,7 +338,7 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
   void Close() {
-    socket_.dispatch([ this, self = this->shared_from_this() ](auto& sockets) {
+    socket_.post([ this, self = this->shared_from_this() ](auto& sockets) {
       auto ec = boost::system::error_code();
       sockets.socket.shutdown(
           asio::ip::tcp::socket::shutdown_type::shutdown_both, ec);

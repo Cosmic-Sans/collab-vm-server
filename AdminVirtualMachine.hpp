@@ -330,7 +330,19 @@ struct AdminVirtualMachine
       {
         VmUserChannel::BroadcastMessage(GetVmDescriptionMessage());
       }
-
+      if (settings[VmSetting::Setting::Which::DISALLOW_GUESTS]
+            .getSetting().getDisallowGuests()
+          && !previous_settings[VmSetting::Setting::Which::DISALLOW_GUESTS]
+             .getSetting().getDisallowGuests())
+      {
+        VmUserChannel::ForEachUser(
+          [](auto& user_data, auto& socket)
+          {
+            // TODO: Send a channel disconnect message
+            // instead of closing the socket
+            socket.Close();
+          });
+      }
       SetGuacamoleArguments();
     }
 
