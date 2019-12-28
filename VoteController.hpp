@@ -37,6 +37,12 @@ public:
   }
 
   [[nodiscard]]
+  bool IsCoolingDown() const
+  {
+    return vote_state_ == VoteState::kCoolingdown;
+  }
+
+  [[nodiscard]]
   std::chrono::milliseconds GetTimeRemaining() const
   {
     const auto expiry = vote_timer_.expiry();
@@ -60,7 +66,7 @@ public:
   }
 
   // Returns true when the vote was counted
-  bool Vote(UserVoteData& data, bool voted_yes) {
+  bool AddVote(UserVoteData& data, bool voted_yes) {
     const auto votes_enabled = static_cast<TBase&>(*this).GetVotesEnabled();
     if (!votes_enabled) {
       return false;
@@ -76,6 +82,7 @@ public:
       }
       // Start a new vote
       vote_state_ = VoteState::kVoting;
+      data.last_vote = voted_yes ? UserVoteData::VoteDecision::kYes : UserVoteData::VoteDecision::kNo;
       yes_vote_count_ = 1;
       no_vote_count_ = 0;
       const auto vote_time = static_cast<TBase&>(*this).GetVoteTime();
@@ -95,8 +102,8 @@ public:
             vote_timer_.expires_after(cooldown_time);
             vote_timer_.async_wait([this](const auto ec)
               {
-                if (!ec)
-                  vote_state_ = VoteState::kIdle;
+                vote_state_ = VoteState::kIdle;
+                static_cast<TBase&>(*this).OnVoteIdle();
               });
           }
           else
@@ -136,6 +143,17 @@ public:
       break;
     }
     return false;
+  }
+
+  bool RemoveVote(UserVoteData& data) {
+    if (data.last_vote == UserVoteData::VoteDecision::kUndecided) {
+      return false;
+    }
+    --(data.last_vote == UserVoteData::VoteDecision::kYes
+      ? yes_vote_count_
+      : no_vote_count_);
+    data.last_vote = UserVoteData::VoteDecision::kUndecided;
+    return true;
   }
 
   void StopVote() {

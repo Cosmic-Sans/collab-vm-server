@@ -250,6 +250,16 @@ struct AdminVirtualMachine
 
     void OnRemoveUser(const std::shared_ptr<TClient>& user) {
       VmTurnController::RemoveUser(user);
+
+      const auto user_data = VmUserChannel::GetUserData(user);
+      if (!user_data.has_value()) {
+        return;
+      }
+      const auto votes_changed =
+        VmVoteController::RemoveVote(user_data->get().vote_data);
+      if (votes_changed) {
+          VmUserChannel::BroadcastMessage(GetVoteStatus());
+      }
     }
 
     void OnCurrentUserChanged(
@@ -311,14 +321,13 @@ struct AdminVirtualMachine
       {
         VmTurnController::Clear();
       }
-      if (settings[VmSetting::Setting::Which::VOTES_ENABLED]
-           .getSetting().getVotesEnabled()
-        != previous_settings[VmSetting::Setting::Which::
-             VOTES_ENABLED]
-           .getSetting().getVotesEnabled())
+      const auto votes_enabled = settings[VmSetting::Setting::Which::VOTES_ENABLED]
+        .getSetting().getVotesEnabled();
+      if (votes_enabled
+          != previous_settings[VmSetting::Setting::Which::
+             VOTES_ENABLED].getSetting().getVotesEnabled())
       {
-        if (!settings[VmSetting::Setting::Which::VOTES_ENABLED]
-             .getSetting().getVotesEnabled()) {
+        if (!votes_enabled) {
           VmVoteController::StopVote();
         }
         VmUserChannel::BroadcastMessage(GetVoteStatus());
@@ -382,21 +391,30 @@ struct AdminVirtualMachine
     [[nodiscard]]
     std::shared_ptr<SocketMessage> GetVoteStatus() const
     {
-        auto message = SocketMessage::CreateShared();
-        auto vote_status = message->GetMessageBuilder()
-          .initRoot<CollabVmServerMessage>()
-          .initMessage()
-          .initVoteStatus()
-          .initStatus();
-        if (GetVotesEnabled()) {
-          auto vote_info = vote_status.initEnabled();
-          vote_info.setTimeRemaining(VmVoteController::GetTimeRemaining().count());
-          vote_info.setYesVoteCount(VmVoteController::GetYesVoteCount());
-          vote_info.setNoVoteCount(VmVoteController::GetNoVoteCount());
-        } else {
-          vote_status.setDisabled();
-        }
+      auto message = SocketMessage::CreateShared();
+      auto vote_status = message->GetMessageBuilder()
+        .initRoot<CollabVmServerMessage>()
+        .initMessage()
+        .initVoteStatus()
+        .initStatus();
+      if (!GetVotesEnabled()) {
+        vote_status.setDisabled();
         return message;
+      }
+      if (VmVoteController::IsCoolingDown()) {
+        vote_status.setCoolingDown();
+        return message;
+      }
+      const auto time_remaining = VmVoteController::GetTimeRemaining().count();
+      if (!time_remaining) {
+        vote_status.setIdle();
+        return message;
+      }
+      auto vote_info = vote_status.initInProgress();
+      vote_info.setTimeRemaining(time_remaining);
+      vote_info.setYesVoteCount(VmVoteController::GetYesVoteCount());
+      vote_info.setNoVoteCount(VmVoteController::GetNoVoteCount());
+      return message;
     }
 
     void Vote(std::shared_ptr<TClient>&& user, bool voted_yes) {
@@ -405,7 +423,7 @@ struct AdminVirtualMachine
         return;
       }
       const auto vote_counted =
-      VmVoteController::Vote(user_vote.value().get().vote_data, voted_yes);
+        VmVoteController::AddVote(user_vote.value().get().vote_data, voted_yes);
       if (vote_counted) {
           VmUserChannel::BroadcastMessage(GetVoteStatus());
       }
@@ -432,6 +450,13 @@ struct AdminVirtualMachine
           user_data.vote_data = {};
           socket.QueueMessage(message);
         });
+    }
+
+    void OnVoteIdle()
+    {
+      if (GetVotesEnabled()) {
+        VmUserChannel::BroadcastMessage(GetVoteStatus());
+      }
     }
 
     [[nodiscard]]
