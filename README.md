@@ -1,5 +1,5 @@
 # collab-vm-server
-[![AppVeyor build status](https://ci.appveyor.com/api/projects/status/lgine3laiy0ojexr/branch/master?svg=true)](https://ci.appveyor.com/project/Cosmic-Sans/collab-vm-server/branch/master)
+[![AppVeyor build status](https://ci.appveyor.com/api/projects/status/8h1gjvnf22h4hmbq/branch/master?svg=true)](https://ci.appveyor.com/project/Cosmic-Sans/collab-vm-server/branch/master)
 [![Travis build status](https://travis-ci.org/Cosmic-Sans/collab-vm-server.svg?branch=master)](https://travis-ci.org/Cosmic-Sans/collab-vm-server)
 
 This repository contains the necessary files to compile the collab-vm-server. collab-vm-server powers CollabVM and it is what you will use to host it. Compilation instructions are below.
