@@ -2095,21 +2095,26 @@ namespace CollabVm::Server
         return &vm->second->vm;
       }
 
-      AdminVirtualMachine<CollabVmServer, TClient>* RemoveAdminVirtualMachine(
+      bool RemoveAdminVirtualMachine(
         const std::uint32_t id)
       {
         auto vm = admin_virtual_machines_.find(id);
         if (vm == admin_virtual_machines_.end())
         {
-          return {};
+          return false;
         }
-        auto& admin_vm = vm->second->vm;
+        vm->second->vm.Stop();
+        vm->second->vm.GetUserChannel([](auto& channel) {
+          channel.Clear();
+        });
+        // FIXME: memory leak
+        vm->second.reset();
         admin_virtual_machines_.erase(vm);
         admin_vm_info_list_.RemoveFirst([id](auto info)
         {
           return info.getId() == id;
         });
-        return &admin_vm;
+        return true;
       }
 
       void SendAdminVmList(TClient& client) const

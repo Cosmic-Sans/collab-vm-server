@@ -10,6 +10,11 @@ struct UserChannel
   {
   }
 
+  void Clear()
+  {
+    users_.clear();
+  }
+
   const auto& GetChatRoom() const
   {
     return chat_room_;
