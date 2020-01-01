@@ -17,17 +17,17 @@ public:
 class TestUserTurnController final : public UserTurnController {
   using UserTurnController::UserTurnController;
   void OnCurrentUserChanged(
-    std::deque<TestUserPtr>& users,
+    const std::deque<TestUserPtr>& users,
     std::chrono::milliseconds time_remaining) override
   {
   }
   void OnUserAdded(
-    std::deque<TestUserPtr>& users,
+    const std::deque<TestUserPtr>& users,
     std::chrono::milliseconds time_remaining) override
   {
   }
   void OnUserRemoved(
-    std::deque<TestUserPtr>& users,
+    const std::deque<TestUserPtr>& users,
     std::chrono::milliseconds time_remaining) override
   {
   }

@@ -243,25 +243,25 @@ struct AdminVirtualMachine
     }
 
     void OnCurrentUserChanged(
-        std::deque<std::shared_ptr<TClient>>& users_queue,
+        const std::deque<std::shared_ptr<TClient>>& users_queue,
         std::chrono::milliseconds time_remaining) override {
       BroadcastTurnQueue(users_queue, time_remaining);
     }
 
     void OnUserAdded(
-        std::deque<std::shared_ptr<TClient>>& users_queue,
+        const std::deque<std::shared_ptr<TClient>>& users_queue,
         std::chrono::milliseconds time_remaining) override {
       BroadcastTurnQueue(users_queue, time_remaining);
     }
 
     void OnUserRemoved(
-        std::deque<std::shared_ptr<TClient>>& users_queue,
+        const std::deque<std::shared_ptr<TClient>>& users_queue,
         std::chrono::milliseconds time_remaining) override {
       BroadcastTurnQueue(users_queue, time_remaining);
     }
 
     void BroadcastTurnQueue(
-        std::deque<std::shared_ptr<TClient>>& users_queue,
+        const std::deque<std::shared_ptr<TClient>>& users_queue,
         std::chrono::milliseconds time_remaining) {
       auto message = SocketMessage::CreateShared();
       auto vm_turn_info =

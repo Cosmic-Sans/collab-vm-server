@@ -56,11 +56,6 @@ public:
     using TurnQueuePositionType = typename decltype(turn_queue_)::size_type;
     std::optional<TurnQueuePositionType> turn_queue_position_;
     friend class TurnController;
-
-    bool HasCurrentTurn() const
-    {
-      return turn_queue_position_ == 0;
-    }
   };
 
   auto GetCurrentUser() const
@@ -163,6 +158,10 @@ public:
 
     if (!turn_queue_.empty())
     {
+      for (auto& user : turn_queue_)
+      {
+        user->turn_queue_position_.reset();
+      }
       turn_queue_.clear();
       OnCurrentUserChanged(turn_queue_, std::chrono::milliseconds(0));
     }
@@ -170,11 +169,11 @@ public:
 
 protected:
   virtual void OnCurrentUserChanged(
-    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
+    const std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
   virtual void OnUserAdded(
-    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
+    const std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
   virtual void OnUserRemoved(
-    std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
+    const std::deque<TUserPtr>& users, std::chrono::milliseconds time_remaining) = 0;
 };
 
 }
