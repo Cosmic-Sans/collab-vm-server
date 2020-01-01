@@ -8,7 +8,6 @@
 namespace CollabVm::Server {
 template<typename TUserPtr>
 class TurnController {
-  boost::asio::io_context& io_context_;
   boost::asio::steady_timer turn_timer_;
   typename decltype(turn_timer_)::duration turn_time_;
   std::deque<TUserPtr> turn_queue_;
@@ -45,9 +44,9 @@ class TurnController {
       turn_timer_.expiry() - std::chrono::steady_clock::now());
   }
 public:
-  explicit TurnController(boost::asio::io_context& io_context) :
-    io_context_(io_context),
-    turn_timer_(io_context),
+  template<typename TExecutionContext>
+  explicit TurnController(TExecutionContext& context) :
+    turn_timer_(context),
     turn_time_(0)
   {
   }

@@ -17,7 +17,6 @@ struct UserVoteData
 
 template<typename TBase>
 class VoteController {
-  boost::asio::io_context& io_context_;
   boost::asio::steady_timer vote_timer_;
 
   enum class VoteState
@@ -30,9 +29,9 @@ class VoteController {
   std::uint32_t no_vote_count_ = 0;
 
 public:
-  explicit VoteController(boost::asio::io_context& io_context) :
-    io_context_(io_context),
-    vote_timer_(io_context)
+  template<typename TExecutionContext>
+  explicit VoteController(TExecutionContext& context) :
+    vote_timer_(context)
   {
   }
 

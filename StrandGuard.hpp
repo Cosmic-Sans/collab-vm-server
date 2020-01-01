@@ -7,6 +7,11 @@ struct StrandGuard {
   explicit StrandGuard(boost::asio::io_context& io_context, TArgs&&... args)
       : strand_(io_context), obj_(std::forward<TArgs>(args)...) {}
 
+  static struct {} ConstructWithStrand;
+  template <typename... TArgs>
+  explicit StrandGuard(boost::asio::io_context& io_context, decltype(ConstructWithStrand), TArgs&&... args)
+      : strand_(io_context), obj_(strand_, std::forward<TArgs>(args)...) {}
+
   template <typename TCompletionHandler>
   void dispatch(TCompletionHandler&& handler) {
     boost::asio::dispatch(strand_,

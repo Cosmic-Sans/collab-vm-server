@@ -12,6 +12,7 @@ struct AdminVirtualMachine
                      : id_(id),
                        state_(
                          io_context,
+                         decltype(state_)::ConstructWithStrand,
                          *this,
                          id,
                          io_context,
@@ -88,36 +89,15 @@ struct AdminVirtualMachine
     using VmVoteController = VoteController<VmState>;
     using VmUserChannel = UserChannel<TClient, typename TClient::UserData, VmState>;
 
-    template<typename TSettingProducer>
     VmState(
-      AdminVirtualMachine& admin_vm,
-      const std::uint32_t id,
-      boost::asio::io_context& io_context,
-      TSettingProducer&& get_setting,
-      CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-      : VmTurnController(io_context),
-        VmVoteController(io_context),
-        VmUserChannel(id),
-        message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
-        settings_(GetInitialSettings(std::forward<TSettingProducer>(get_setting))),
-        guacamole_client_(io_context, admin_vm),
-        admin_vm_(admin_vm)
-    {
-      SetAdminVmInfo(admin_vm_info);
-
-      VmTurnController::SetTurnTime(
-        std::chrono::seconds(
-          GetSetting(VmSetting::Setting::TURN_TIME).getTurnTime()));
-    }
-
-    VmState(
+      boost::asio::io_context::strand& strand,
       AdminVirtualMachine& admin_vm,
       const std::uint32_t id,
       boost::asio::io_context& io_context,
       capnp::List<VmSetting>::Reader initial_settings,
       CollabVmServerMessage::AdminVmInfo::Builder admin_vm_info)
-      : VmTurnController(io_context),
-        VmVoteController(io_context),
+      : VmTurnController(strand),
+        VmVoteController(strand),
         VmUserChannel(id),
         message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
         settings_(GetInitialSettings(initial_settings)),
