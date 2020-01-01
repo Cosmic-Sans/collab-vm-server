@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.7)
 
+if(POLICY CMP0091)
+  # Select MSVC runtime based on CMAKE_MSVC_RUNTIME_LIBRARY
+  cmake_policy(SET CMP0091 NEW)
+endif()
+
 enable_language(C CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/")
 
@@ -112,6 +117,12 @@ if (NOT WIN32)
         "${CMAKE_SOURCE_DIR}/submodules/FreeRDP/cmake/FindOpenSSL.cmake"
     WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 endif()
+# Workaround FreeRDP overriding CMAKE_MSVC_RUNTIME_LIBRARY
+set(FREERDP_MSVC_RUNTIME "")
+if(CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "MultiThreaded"
+    OR CMAKE_MSVC_RUNTIME_LIBRARY STREQUAL "MultiThreadedDebug")
+  set(FREERDP_MSVC_RUNTIME "-DMSVC_RUNTIME=static")
+endif()
 # Configure FreeRDP
 execute_process(
   COMMAND ${CMAKE_COMMAND}
@@ -119,6 +130,9 @@ execute_process(
     -DCMAKE_INSTALL_PREFIX:PATH=${FREERDP_INSTALL_DIR}
     -DCMAKE_INSTALL_LIBDIR:STRING=lib
     -DBUILD_SHARED_LIBS:BOOL=OFF
+    # TODO: Don't hardcore this
+    -DCMAKE_WINDOWS_VERSION=WIN7
+    ${FREERDP_MSVC_RUNTIME}
     ${CMAKE_SOURCE_DIR}/submodules/FreeRDP
   WORKING_DIRECTORY ${FREERDP_BINARY_DIR})
 # Build FreeRDP
