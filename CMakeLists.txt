@@ -301,9 +301,30 @@ file(GLOB GUACAMOLE_SOURCES
       ${GUACAMOLE_ROOT_DIR}/src/libguac/timestamp.cpp
       ${GUACAMOLE_ROOT_DIR}/src/libguac/user-handlers.cpp
       ${GUACAMOLE_ROOT_DIR}/src/libguac/*.c
-      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/*.c
-      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/guac_rdpsnd/*.c
       ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/_generated_keymaps.c
+      ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/plugins/_generated_channel_entry_wrappers.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/bitmap.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/channels/common-svc.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/channels/rdpsnd/rdpsnd-messages.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/channels/rdpsnd/rdpsnd.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/client.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/color.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/error.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/gdi.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/glyph.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/input.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/keyboard/decompose.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/keyboard/keyboard.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/keyboard/keymap.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/log.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/plugins/channels.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/plugins/ptr-string.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/pointer.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/rdp.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/resolution.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/settings.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/unicode.c
+    ${GUACAMOLE_ROOT_DIR}/src/protocols/rdp/user.c
       ${GUACAMOLE_ROOT_DIR}/src/protocols/vnc/*.c)
 
 list(REMOVE_ITEM GUACAMOLE_SOURCES
