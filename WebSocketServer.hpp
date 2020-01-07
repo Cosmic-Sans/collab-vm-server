@@ -41,6 +41,10 @@ class WebServerSocket : public std::enable_shared_from_this<
                        self = this->shared_from_this() ](auto& socket) mutable {
       boost::system::error_code ec;
       ip_address_ = socket.socket.lowest_layer().remote_endpoint(ec).address();
+      if (ec) {
+        Close();
+        return;
+      }
       socket.socket.set_option(asio::ip::tcp::no_delay(true), ec);
       ReadHttpRequest(std::move(self));
     });
@@ -175,24 +179,7 @@ class WebServerSocket : public std::enable_shared_from_this<
                       beast::http::token_list(upgrade_header->value())
                           .exists("websocket")) {
                     buffer_.consume(buffer_.size());
-                    sockets.websocket.async_accept_ex(
-                        request,
-                        [](beast::websocket::response_type& res) {
-                          res.set(beast::http::field::server,
-                                  "collab-vm-server");
-                        },
-                        socket_.wrap([ this, self = std::move(self) ](
-                            auto& sockets,
-                            const boost::system::error_code ec) mutable {
-                          if (ec) {
-                            Close();
-                            return;
-                          }
-                          OnConnect();
-                          sockets.websocket.binary(true);
-                          sockets.websocket.auto_fragment(false);
-                          CreateMessageBuffer()->StartRead(std::move(self));
-                        }));
+                    OnPreConnect();
                     return;
                   }
                 }
@@ -352,8 +339,7 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
   struct IpAddress {
-    //    using IpBytes = std::array<std::byte, 16>;
-    using IpBytes = std::array<std::uint8_t, 16>;
+    using IpBytes = std::array<std::byte, 16>;
 
     IpAddress() = default;
     IpAddress(const boost::asio::ip::address& ip_address)
@@ -367,16 +353,9 @@ class WebServerSocket : public std::enable_shared_from_this<
 
     const std::string& AsString() const { return str_; }
     const IpBytes& AsBytes() const { return bytes_; }
-    std::vector<std::byte> AsVector() const
+    auto AsVector() const
     {
-      //return std::vector<std::byte>(bytes_.begin(), bytes_.end());
-      auto vector = std::vector<std::byte>();
-      vector.reserve(bytes_.size());
-      for (auto byte : bytes_)
-      {
-        vector.push_back(std::byte(byte));
-      }
-      return vector;
+      return std::vector(bytes_.begin(), bytes_.end());
     }
 
    private:
@@ -385,20 +364,20 @@ class WebServerSocket : public std::enable_shared_from_this<
     static IpBytes GetIpv4MappedBytes(
         const boost::asio::ip::address_v4& ip_address) {
       auto bytes = IpBytes();
-      bytes[10] = 0xFF;
-      bytes[11] = 0xFF;
+      bytes[10] = std::byte(0xFF);
+      bytes[11] = std::byte(0xFF);
       CopyIpAddressBytes(ip_address, bytes.begin() + 12);
       return bytes;
     }
 
-    template <typename TIpAddress, typename TDestination>
+    template<typename TIpAddress, typename TDestination>
     static void CopyIpAddressBytes(const TIpAddress& ip_address,
                                    TDestination dest) {
       const auto bytes = ip_address.to_bytes();
-      std::copy_n(reinterpret_cast<
-                      const typename std::iterator_traits<TDestination>::value_type*>(
-                      bytes.data()),
-                  bytes.size(), dest);
+      std::transform(bytes.begin(), bytes.end(), dest,
+        [](auto byte) {
+          return typename std::iterator_traits<TDestination>::value_type(byte);
+        });
     }
 
     IpBytes bytes_;
@@ -475,6 +454,28 @@ class WebServerSocket : public std::enable_shared_from_this<
   }
 
  protected:
+  virtual void OnPreConnect() {
+    socket_.dispatch([this, self=this->shared_from_this()](auto& sockets) {
+      sockets.websocket.async_accept_ex(
+        parser_.get(),
+        [](beast::websocket::response_type& res) {
+          res.set(beast::http::field::server,
+                  "collab-vm-server");
+        },
+        socket_.wrap([this, self = std::move(self)](
+            auto& sockets,
+            const boost::system::error_code ec) mutable {
+          if (ec) {
+            Close();
+            return;
+          }
+          OnConnect();
+          sockets.websocket.binary(true);
+          sockets.websocket.auto_fragment(false);
+          CreateMessageBuffer()->StartRead(std::move(self));
+        }));
+    });
+  }
   virtual void OnConnect() = 0;
   virtual void OnMessage(std::shared_ptr<MessageBuffer>&& buffer) = 0;
   virtual void OnDisconnect() = 0;
@@ -508,11 +509,6 @@ class WebServerSocket : public std::enable_shared_from_this<
   using request_body_t =
       beast::http::basic_dynamic_body<beast::flat_static_buffer<1024 * 1024>>;
   beast::http::request_parser<request_body_t> parser_;
-
-  //  beast::websocket::stream<asio::ip::tcp::socket&> websocket_;
-  //  typename StrandGuard<Strand,
-  //  beast::websocket::stream<asio::ip::tcp::socket&>>::SharedStrandGuard
-  //  websocket_;
 
   const std::filesystem::path& doc_root_;
   IpAddress ip_address_;
