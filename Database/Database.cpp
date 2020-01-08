@@ -155,11 +155,7 @@ void Database::LoadServerSettings(
       dynamic_server_setting.set(field, dynamic_db_setting.get(field));
       setting_id++;
     };
-  if (setting_id)
-  {
-    return;
-  }
-  // No settings in the DB, create defaults
+  // Set missing settings to their defaults
   for (; setting_id < fields_count; setting_id++) {
     auto server_setting = settings_list[setting_id].initSetting();
     capnp::DynamicStruct::Builder dynamic_server_setting = server_setting;

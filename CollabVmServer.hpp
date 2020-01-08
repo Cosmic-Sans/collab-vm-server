@@ -34,6 +34,7 @@
 #include "VoteController.hpp"
 #include "UserChannel.hpp"
 #include "AdminVirtualMachine.hpp"
+#include "IPData.hpp"
 
 namespace CollabVm::Server
 {
@@ -157,6 +158,32 @@ namespace CollabVm::Server
                    std::make_shared<CollabVmDynamicMessageBuffer>())
                  : std::static_pointer_cast<typename TSocket::MessageBuffer>(
                    std::make_shared<CollabVmStaticMessageBuffer>());
+      }
+
+      void OnPreConnect() override
+      {
+        server_.GetIPData(TSocket::GetIpAddress(),
+          [this, self = shared_from_this()](auto& ip_data) {
+            ip_data_ = ip_data;
+            server_.settings_.dispatch([this, self = std::move(self)](auto& settings) {
+              const auto max_connections_enabled =
+                settings.GetServerSetting(ServerSetting::Setting::MAX_CONNECTIONS_ENABLED)
+                .getMaxConnectionsEnabled();
+              const auto max_connections =
+                settings.GetServerSetting(ServerSetting::Setting::MAX_CONNECTIONS)
+                .getMaxConnections();
+              ip_data_->dispatch(
+                [this, self = std::move(self), max_connections_enabled, max_connections]
+                (auto& ip_data) {
+                  if (max_connections_enabled
+                      && ++ip_data.connections > max_connections) {
+                    TSocket::Close();
+                    return;
+                  }
+                  TSocket::OnPreConnect();
+              });
+            });
+          });
       }
 
       void OnConnect() override
@@ -1645,6 +1672,14 @@ namespace CollabVm::Server
         if (is_in_global_chat_) {
           server_.global_chat_room_.dispatch(std::move(leave_channel));
         }
+        if (ip_data_) {
+          ip_data_->dispatch(
+            [this, self = shared_from_this()](auto& ip_data) {
+              if (ip_data.connections > 0) {
+                --ip_data.connections;
+              }
+            });
+        }
       }
 
       void LeaveServerConfig()
@@ -1801,6 +1836,7 @@ namespace CollabVm::Server
       std::chrono::time_point<std::chrono::steady_clock> last_username_change_;
       std::uint32_t connected_vm_id_ = 0;
       StrandGuard<std::string> username_;
+      std::shared_ptr<StrandGuard<IPData>> ip_data_;
       friend class CollabVmServer;
     };
 
@@ -1811,6 +1847,7 @@ namespace CollabVm::Server
         settings_(io_context_, db_),
         sessions_(io_context_),
         guests_(io_context_),
+        ip_data_(io_context_),
         ssl_ctx_(boost::asio::ssl::context::sslv23),
         captcha_verifier_(io_context_, ssl_ctx_),
         virtual_machines_(io_context_,
@@ -1975,6 +2012,18 @@ namespace CollabVm::Server
           if (user != users.cend()) {
             callback(*user);
           }
+        });
+    }
+
+    template<typename TCallback>
+    void GetIPData(const typename TServer::TSocket::IpAddress& ip_address, TCallback&& callback) {
+      ip_data_.dispatch(
+        [this, &ip_address, callback = std::forward<TCallback>(callback)]
+        (auto& ip_data) {
+          auto data = ip_data.find(ip_address.AsBytes());
+          callback((data == ip_data.end()
+            ? ip_data.try_emplace(ip_address.AsBytes(), std::make_shared<StrandGuard<IPData>>(io_context_)).first
+            : data)->second);
         });
     }
 
@@ -2638,6 +2687,13 @@ namespace CollabVm::Server
       >
     >
     guests_;
+    StrandGuard<
+      std::unordered_map<
+        typename Socket::IpAddress::IpBytes,
+        std::shared_ptr<StrandGuard<IPData>>,
+        boost::hash<typename Socket::IpAddress::IpBytes>
+      >
+    > ip_data_;
     boost::asio::ssl::context ssl_ctx_;
     CaptchaVerifier captcha_verifier_;
   public:
