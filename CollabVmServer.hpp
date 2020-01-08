@@ -690,7 +690,9 @@ namespace CollabVm::Server
                                     .initRoot<CollabVmServerMessage>()
                                     .initMessage()
                                     .initChatMessage();
-                  chat_room.AddUserMessage(chat_room_message, username,
+                  chat_room.AddUserMessage(chat_room_message,
+                                           username,
+                                           GetUserType(),
                                            chat_message.getMessage());
                   channel.BroadcastMessage(std::move(new_chat_message));
                 };

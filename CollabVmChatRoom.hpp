@@ -32,6 +32,7 @@ public:
   void AddUserMessage(
     CollabVmServerMessage::ChannelChatMessage::Builder channel_chat_message,
     const std::string& username,
+    CollabVmServerMessage::UserType user_type,
     const std::string& message) {
     const auto timestamp =
       std::chrono::duration_cast<std::chrono::seconds>(
@@ -40,6 +41,7 @@ public:
     channel_chat_message.setChannel(id_);
     auto chat_message = channel_chat_message.initMessage();
     chat_message.setMessage(message);
+    chat_message.setUserType(user_type);
     chat_message.setSender(username);
     chat_message.setTimestamp(timestamp);
 
