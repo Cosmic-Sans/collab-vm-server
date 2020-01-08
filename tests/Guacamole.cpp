@@ -270,7 +270,7 @@ struct TestGuacamoleWebSocket
 
   TestGuacamoleClient(boost::asio::io_context& io_context,
     TestStrandGuard<std::list<TestGuacamoleWebSocket>>& websockets)
-    : GuacamoleClient<TestGuacamoleClient>(io_context),
+    : GuacamoleClient<TestGuacamoleClient>(boost::asio::io_context::strand(io_context)),
       state_(io_context, State::kDisconnected),
       websockets_(websockets)
   {

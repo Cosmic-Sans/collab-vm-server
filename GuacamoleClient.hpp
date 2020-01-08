@@ -40,8 +40,8 @@ template<typename TCallbacks>
 class GuacamoleClient
 {
 public:
-  GuacamoleClient(boost::asio::io_context& io_context)
-    : io_context_(io_context),
+  GuacamoleClient(boost::asio::io_context::strand& execution_context)
+    : execution_context_(execution_context),
       user_(nullptr, &guac_user_free),
       client_(nullptr, &guac_client_free)
   {
@@ -123,7 +123,10 @@ public:
 
   void ReadInstruction(Guacamole::GuacClientInstruction::Reader instr)
   {
-    guac_call_instruction_handler(user_.get(), instr);
+    if (user_)
+    {
+      guac_call_instruction_handler(user_.get(), instr);
+    }
   }
 
   /*
@@ -272,7 +275,7 @@ private:
             guacamole_client.state_.compare_exchange_strong(state, State::kRunning);
           if (was_starting)
           {
-            boost::asio::post(guacamole_client.io_context_,
+            boost::asio::post(guacamole_client.execution_context_,
               [&guacamole_client]
               {
                 static_cast<TCallbacks&>(guacamole_client).OnStart();
@@ -355,7 +358,7 @@ private:
 
     pthread_key_delete(guacamole_client.guacamole_thread_destructor_key);
     guacamole_client.state_ = State::kStopped;
-    boost::asio::post(guacamole_client.io_context_,
+    boost::asio::post(guacamole_client.execution_context_,
       [&guacamole_client]
       {
         guacamole_client.client_.reset();
@@ -364,7 +367,7 @@ private:
       });
   }
 
-  boost::asio::io_context& io_context_;
+  boost::asio::io_context::strand& execution_context_;
   std::unique_ptr<guac_user, decltype(&guac_user_free)> user_;
   std::unique_ptr<guac_client, decltype(&guac_client_free)> client_;
   std::vector<const char*> args_;

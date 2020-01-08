@@ -14,9 +14,9 @@ struct CollabVmGuacamoleClient final
   : GuacamoleClient<CollabVmGuacamoleClient<TAdminVirtualMachine>>
 {
   CollabVmGuacamoleClient(
-    boost::asio::io_context& io_context,
+    boost::asio::io_context::strand& execution_context,
     TAdminVirtualMachine& admin_vm)
-    : GuacamoleClient<CollabVmGuacamoleClient>(io_context),
+    : GuacamoleClient<CollabVmGuacamoleClient>(execution_context),
       admin_vm_(admin_vm)
   {
   }

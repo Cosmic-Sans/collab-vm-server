@@ -101,7 +101,7 @@ struct AdminVirtualMachine
         VmUserChannel(id),
         message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
         settings_(GetInitialSettings(initial_settings)),
-        guacamole_client_(io_context, admin_vm),
+        guacamole_client_(strand, admin_vm),
         admin_vm_(admin_vm)
     {
       SetAdminVmInfo(admin_vm_info);
