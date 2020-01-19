@@ -92,7 +92,7 @@ public:
       return false;
     }
     const auto user_position =
-      turn_queue_.begin() - user->turn_queue_position_.value();
+      turn_queue_.begin() + user->turn_queue_position_.value();
     // Remove the user and update the queue position for all users behind them
     for (auto after_removed = turn_queue_.erase(user_position);
          after_removed != turn_queue_.end(); after_removed++)
