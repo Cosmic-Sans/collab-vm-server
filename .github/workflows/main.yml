@@ -17,9 +17,9 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           automatic_release_tag: prerelease
-      - name: GitHub Releases
-        uses: fnkr/github-action-ghr@v1.2
+      - name: Upload release
+        uses: yakuhzi/action-release@v1
+        with:
+          file: build/hello
         env:
-          GITHUB_REF: refs/tags/prerelease
-          GHR_COMPRESS: xz
-          GHR_PATH: build/
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
