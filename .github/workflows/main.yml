@@ -18,6 +18,11 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           automatic_release_tag: prerelease
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
           files: |
             hello
             build/test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
