@@ -13,23 +13,10 @@ jobs:
         shell: powershell
         run: |
           New-Item collab-vm-win64.zip
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: prerelease
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
       - name: Upload Release Asset
-        id: upload-release-asset 
-        uses: actions/upload-release-asset@v1.0.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: marvinpinto/action-automatic-releases@0.2.2
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: D:\a\collab-vm-server\collab-vm-server\build\collab-vm-win64.zip
-          asset_name: collab-vm-win64.zip
-          asset_content_type: application/zip
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          prerelease: true
+          automatic_release_tag: prerelease
+          files: collab-vm-win64.zip
