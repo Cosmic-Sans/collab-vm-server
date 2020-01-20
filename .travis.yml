@@ -16,11 +16,11 @@ before_install:
   git fetch origin master
   git checkout -b master origin/master
   cp triplets/x64-linux.cmake triplets/x64-linux-musl.cmake
-  echo 'set(CMAKE_SYSROOT /x86_64-linux-musl/)' >> scripts/toolchains/linux.cmake
+  echo 'set(CMAKE_SYSROOT /arm-linux-musleabi/)' >> scripts/toolchains/linux.cmake
   popd
 # Prevent FreeRDP from changing RPATH
 - sed -i -e '/RPATH/d' submodules/FreeRDP/CMakeLists.txt
-- docker run -dit --name musl -v $(pwd)/../vcpkg:/src/vcpkg/ -v $(pwd):/src/collab-vm-server/ muslcc/x86_64:x86_64-linux-musl sh
+- docker run -dit --name musl -v $(pwd)/../vcpkg:/src/vcpkg/ -v $(pwd):/src/collab-vm-server/ muslcc/x86_64:arm-linux-musleabi bash
 cache:
   directories:
     - ../vcpkg/
@@ -30,7 +30,7 @@ script:
   # - Create libintl.h to workaround a bug with the gettext vcpkg package
   # - Install vcpkg packages
   # - Build collab-vm-server
-  - docker exec -it musl sh -c "sed -i -e 's/v[[:digit:]]\..*\//edge\//g' /etc/apk/repositories && apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && mkdir -p /usr/include/ && touch /usr/include/libintl.h && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
+  - docker exec -it musl sh -c "apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && mkdir -p /usr/include/ && touch /usr/include/libintl.h && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
 before_deploy:
   - mkdir $OUTPUT
   # Download and extract web-app
