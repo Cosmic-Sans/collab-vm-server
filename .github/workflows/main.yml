@@ -3,7 +3,7 @@ name: CollabVM Server 2 CI
 on: [push, pull_request]
 
 jobs:
-  windows_x64: # Windows Server 2019 (x64)a
+  windows_x64:
     runs-on: windows-latest
     steps:
       - name: Build
@@ -16,4 +16,6 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           automatic_release_tag: prerelease
-          files: collab-vm-win64.zip
+          files: |
+            test.txt
+            collab-vm-win64.zip
