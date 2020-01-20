@@ -7,15 +7,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Build
-        shell: powershell
+        shell: cmd
         run: |
-          New-Item collab-vm-win64.zip
-      - name: Upload Release Asset
-        uses: marvinpinto/action-automatic-releases@v0.2.2
+          echo test > collab-vm-win64.zip
+      - name: Create Release
+        uses: ncipollo/release-action@v1
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          allowUpdates: true
+          token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
-          automatic_release_tag: prerelease
-          files: |
-            test.txt
-            collab-vm-win64.zip
+          tag: prerelease
+          artifact: collab-vm-win64.zip
