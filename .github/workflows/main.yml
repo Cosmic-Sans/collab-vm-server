@@ -20,4 +20,4 @@ jobs:
           automatic_release_tag: prerelease
           files: |
             hello
-            test
+            build/test
