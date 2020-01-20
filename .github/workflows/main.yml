@@ -23,3 +23,4 @@ jobs:
           file: build/hello
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF: refs/tags/prerelease
