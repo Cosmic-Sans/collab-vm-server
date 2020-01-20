@@ -6,15 +6,12 @@ jobs:
   windows_x64: # Windows Server 2019 (x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v1
-        with: 
-          submodules: true
       - name: Build
         shell: powershell
         run: |
           New-Item collab-vm-win64.zip
       - name: Upload Release Asset
-        uses: marvinpinto/action-automatic-releases@0.2.2
+        uses: marvinpinto/action-automatic-releases@v0.2.2
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
