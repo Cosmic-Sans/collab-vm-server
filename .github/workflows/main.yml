@@ -1,0 +1,28 @@
+name: CollabVM Server 2 CI
+
+on: [push, pull_request]
+
+jobs:
+  windows_x64: # Windows Server 2019 (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v1
+        with: 
+          submodules: true
+      - name: Setup 
+        shell: powershell
+        run: | 
+          git submodule update --init --recursive
+          # Install dependencies
+          vcpkg update
+          vcpkg install --triplet x64-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
+      - name: Build
+        shell: powershell
+        run: |
+          mkdir build
+          mkdir install
+          cd build
+          cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=D:/a/collab-vm-server/collab-vm-server/install/ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows ..
+          cmake --build . --target install --config RelWithDebInfo
+          dir D:\a\collab-vm-server\collab-vm-server\install
+          exit
