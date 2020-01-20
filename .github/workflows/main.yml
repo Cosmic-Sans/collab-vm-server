@@ -20,5 +20,6 @@ jobs:
           automatic_release_tag: prerelease
       - uses: ncipollo/release-action@v1
         with:
+          tag: prerelease
           artifacts: "hello,build/test"
           token: ${{ secrets.GITHUB_TOKEN }}
