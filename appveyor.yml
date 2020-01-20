@@ -13,6 +13,7 @@ install:
   # Clone submodules
   - git submodule update --init --recursive
   # Update vcpkg
+  - ps: (Get-Content CMakeLists.txt).Replace('OpenSSL::Crypto', 'crypt32.lib ws2_32.lib OpenSSL::Crypto') | Set-Content -Encoding Ascii CMakeLists.txt
   - ps: Remove-Item -Recurse -Force C:\OpenSSL*
   - git -C C:\Tools\vcpkg\ pull
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
