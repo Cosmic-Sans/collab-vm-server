@@ -17,10 +17,11 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           automatic_release_tag: prerelease
-      - name: Upload release
-        uses: yakuhzi/action-release@v1
+      - name: Create Release
+        uses: ncipollo/release-action@v1
         with:
-          file: build/hello
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REF: refs/tags/prerelease
+          allowUpdates: true
+          token: "${{ secrets.GITHUB_TOKEN }}"
+          prerelease: true
+          tag: prerelease
+          artifact: build/hello
