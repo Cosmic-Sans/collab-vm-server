@@ -10,11 +10,12 @@ jobs:
         with: 
           submodules: true
       - name: Setup 
-        shell: powershell
+        shell: cmd
         run: | 
           git submodule update --init --recursive
-          # Install dependencies
-          vcpkg update
+          rem Install dependencies
+          git -C %VCPKG_INSTALLATION_ROOT% pull
+          cmd %VCPKG_INSTALLATION_ROOT%\bootstrap-vcpkg.bat
           vcpkg install --triplet x64-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
       - name: Build
         shell: powershell
@@ -24,5 +25,24 @@ jobs:
           cd build
           cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=D:/a/collab-vm-server/collab-vm-server/install/ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows ..
           cmake --build . --target install --config RelWithDebInfo
-          dir D:\a\collab-vm-server\collab-vm-server\install
-          exit
+          Compress-Archive -Path D:\a\collab-vm-server\collab-vm-server\install\ -DestinationPath collab-vm-win64.zip
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: prerelease
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: D:\a\collab-vm-server\collab-vm-server\build\collab-vm-win64.zip
+          asset_name: collab-vm-win64.zip
+          asset_content_type: application/zip
