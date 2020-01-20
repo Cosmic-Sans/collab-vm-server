@@ -3,7 +3,7 @@ name: CollabVM Server 2 CI
 on: [push, pull_request]
 
 jobs:
-  windows_x64: # Windows Server 2019 (x64)
+  windows_x64: # Windows Server 2019 (x64)a
     runs-on: windows-latest
     steps:
       - name: Build
