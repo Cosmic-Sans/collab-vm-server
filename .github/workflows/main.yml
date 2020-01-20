@@ -10,11 +10,12 @@ jobs:
         shell: cmd
         run: |
           echo test > collab-vm-win64.zip
-      - name: Create Release
-        uses: ncipollo/release-action@v1
+      - name: Upload Release Asset
+        uses: marvinpinto/action-automatic-releases@v0.2.2
         with:
-          allowUpdates: true
-          token: "${{ secrets.GITHUB_TOKEN }}"
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
-          tag: prerelease
-          artifact: collab-vm-win64.zip
+          automatic_release_tag: prerelease
+          files: |
+            asdf
+            collab-vm-win64.zip
