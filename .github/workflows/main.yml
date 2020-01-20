@@ -9,23 +9,10 @@ jobs:
       - uses: actions/checkout@v1
         with: 
           submodules: true
-      - name: Setup 
-        shell: cmd
-        run: | 
-          git submodule update --init --recursive
-          rem Install dependencies
-          git -C %VCPKG_INSTALLATION_ROOT% pull
-          cmd %VCPKG_INSTALLATION_ROOT%\bootstrap-vcpkg.bat
-          vcpkg install --triplet x64-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
       - name: Build
         shell: powershell
         run: |
-          mkdir build
-          mkdir install
-          cd build
-          cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=D:/a/collab-vm-server/collab-vm-server/install/ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows ..
-          cmake --build . --target install --config RelWithDebInfo
-          Compress-Archive -Path D:\a\collab-vm-server\collab-vm-server\install\ -DestinationPath collab-vm-win64.zip
+          New-Item collab-vm-win64.zip
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1
