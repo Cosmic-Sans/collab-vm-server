@@ -9,13 +9,17 @@ jobs:
       - name: Build
         shell: cmd
         run: |
-          echo test > collab-vm-win64.zip
+          mkdir build
+          echo test > build\hello
       - name: Upload Release Asset
         uses: marvinpinto/action-automatic-releases@v0.2.2
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: true
           automatic_release_tag: prerelease
-          files: |
-            asdf
-            collab-vm-win64.zip
+      - name: GitHub Releases
+        uses: fnkr/github-action-ghr@v1.2
+        env:
+          GITHUB_REF: refs/tags/prerelease
+          GHR_COMPRESS: xz
+          GHR_PATH: build/
