@@ -13,11 +13,14 @@ install:
   # Clone submodules
   - git submodule update --init --recursive
   # Update vcpkg
+  - rd /s /q C:\Tools\vcpkg\installed\
   - git -C C:\Tools\vcpkg\ pull
+    #- git -C C:\Tools\vcpkg\ checkout ee0716be5bd~ C:\Tools\vcpkg\ports\glib\
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
   # Build only release libraries, not debug
   - ps: Add-Content C:\Tools\vcpkg\triplets\$env:PLATFORM-windows-static.cmake "set(VCPKG_BUILD_TYPE release)"
   # GLib is a dependency of cairo that must be dynamically linked
+  - ps: (Get-Content C:\Tools\vcpkg\ports\glib\CMakeLists.txt).Replace('${LIBINTL_LIBRARY}', 'unofficial::iconv::libiconv unofficial::iconv::libcharset ${LIBINTL_LIBRARY}') | Set-Content -Encoding Ascii C:\Tools\vcpkg\ports\glib\CMakeLists.txt
   - ps: Add-Content C:\Tools\vcpkg\triplets\$env:PLATFORM-windows-static.cmake "if(PORT MATCHES ""glib"")`n`tset(VCPKG_LIBRARY_LINKAGE dynamic)`n`tset(VCPKG_CRT_LINKAGE dynamic)`nendif()"
   # Install dependencies
   - vcpkg.exe install --triplet %PLATFORM%-windows-static cairo libjpeg-turbo sqlite3 libpng openssl pthreads
@@ -40,6 +43,9 @@ build_script:
 artifacts:
   - path: install/
     name: collab-vm-win64
+on_finish:
+  - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+    #- ps: cat C:\Tools\vcpkg\buildtrees\glib\install-x64-windows-static-rel-out.log
 before_deploy:
     # Move the tag to the most recent commit, but delete it first
     # so GitHub updates the timestamp of the release
