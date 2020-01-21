@@ -22,5 +22,6 @@ jobs:
         with:
           allowUpdates: true
           tag: prerelease
+          prerelease: true
           artifacts: "hello,build/test"
           token: ${{ secrets.GITHUB_TOKEN }}
