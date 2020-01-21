@@ -21,6 +21,7 @@ jobs:
           # Build only release libraries, not debug
           Add-Content $env:VCPKG_INSTALLATION_ROOT\triplets\x64-windows-static.cmake "set(VCPKG_BUILD_TYPE release)"
           # GLib is a dependency of cairo that must be dynamically linked
+          (Get-Content $env:VCPKG_INSTALLATION_ROOT\ports\glib\CMakeLists.txt).Replace('${LIBINTL_LIBRARY}', 'unofficial::iconv::libiconv unofficial::iconv::libcharset ${LIBINTL_LIBRARY}') | Set-Content -Encoding Ascii $env:VCPKG_INSTALLATION_ROOT\ports\glib\CMakeLists.txt
           Add-Content $env:VCPKG_INSTALLATION_ROOT\triplets\x64-windows-static.cmake "if(PORT MATCHES ""glib"")`n`tset(VCPKG_LIBRARY_LINKAGE dynamic)`n`tset(VCPKG_CRT_LINKAGE dynamic)`nendif()"
           vcpkg install --triplet x64-windows-static cairo libjpeg-turbo sqlite3 libpng openssl pthreads
       - name: Build
