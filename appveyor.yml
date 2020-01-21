@@ -12,29 +12,31 @@ pull_requests:
 install:
   # Clone submodules
   - git submodule update --init --recursive
-  - rd /s /q C:\Tools\vcpkg\installed\
   # Update vcpkg
   - git -C C:\Tools\vcpkg\ checkout tags/2019.12
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
+  # Build only release libraries, not debug
+  - ps: Add-Content C:\Tools\vcpkg\triplets\$env:PLATFORM-windows-static.cmake "set(VCPKG_BUILD_TYPE release)"
+  # GLib is a dependency of cairo that must be dynamically linked
+  - ps: Add-Content C:\Tools\vcpkg\triplets\$env:PLATFORM-windows-static.cmake "if(PORT MATCHES ""glib"")`n`tset(VCPKG_LIBRARY_LINKAGE dynamic)`n`tset(VCPKG_CRT_LINKAGE dynamic)`nendif()"
   # Install dependencies
-  - vcpkg.exe install --triplet %PLATFORM%-windows cairo libjpeg-turbo sqlite3 libpng openssl pthreads
+  - vcpkg.exe install --triplet %PLATFORM%-windows-static cairo libjpeg-turbo sqlite3 libpng openssl pthreads
   # Upgrade dependencies if they were cached
-  - vcpkg.exe upgrade --triplet %PLATFORM%-windows --no-dry-run
+  - vcpkg.exe upgrade --triplet %PLATFORM%-windows-static --no-dry-run
 cache: 
   - C:\Tools\vcpkg\installed\
 build_script:
+  - ps: Add-Content cmake/MSVCStaticToolchain.cmake 'include("C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake")'
   - mkdir build
   - cd build
-  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows ..
+  - cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_INSTALL_PREFIX=%APPVEYOR_BUILD_FOLDER%/install/ -DCMAKE_TOOLCHAIN_FILE=%APPVEYOR_BUILD_FOLDER%/cmake/MSVCStaticToolchain.cmake -DVCPKG_TARGET_TRIPLET=%PLATFORM%-windows-static ..
   - cmake --build . --target install --config RelWithDebInfo
-  # Vcpkg should automatically copy any necessary DLLs,
-  # but it doesn't so manually copy them
-  - ps: $vswhere = join-path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; $vspath = &$vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; $vspath = join-path $vspath 'Common7\Tools\vsdevcmd.bat'; $dumpbin = cmd /s /c """$vspath"">nul && where dumpbin.exe"; cd "$env:APPVEYOR_BUILD_FOLDER/install/"; $missingDLLs = $true; while ($missingDLLs) { $missingDLLs = ls | %{ &$dumpbin /dependents /nologo $_.Name } | sls '\S+\.dll' | %{ $_.matches[0].Value } | select -unique | ?{ -not (test-path $_) } | %{ ls C:\Tools\vcpkg\installed\x64-windows\debug\ -rec -incl $_ } | %{ cp $_; $_ } }
   # Find and copy VNC demo into install directory
   - ps: ls -rec -incl example.exe "$env:APPVEYOR_BUILD_FOLDER/build/" | select -first 1 | cp -dest "$env:APPVEYOR_BUILD_FOLDER/install/vnc-demo.exe"
   # Download and extract web-app
+  - cd ..
   - wsl wget https://github.com/Cosmic-Sans/collab-vm-web-app/releases/download/prerelease/web-app.tar.gz
-  - wsl tar xfz web-app.tar.gz --directory=../install/
+  - wsl tar xfz web-app.tar.gz --directory=install/
 artifacts:
   - path: install/
     name: collab-vm-win64
