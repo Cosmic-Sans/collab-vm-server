@@ -13,7 +13,7 @@ install:
   # Clone submodules
   - git submodule update --init --recursive
   # Update vcpkg
-  - git -C C:\Tools\vcpkg\ pull
+  - git -C C:\Tools\vcpkg\ checkout tags/2019.12
   - C:\Tools\vcpkg\bootstrap-vcpkg.bat
   # Build only release libraries, not debug
   - ps: Add-Content C:\Tools\vcpkg\triplets\$env:PLATFORM-windows-static.cmake "set(VCPKG_BUILD_TYPE release)"
