@@ -6,16 +6,37 @@ jobs:
   windows_x64:
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v1
+        with: 
+          submodules: true
+      - name: Setup 
+        shell: cmd
+        run: | 
+          git submodule update --init --recursive
+          rem Install dependencies
+          git -C %VCPKG_INSTALLATION_ROOT% pull
+          cmd %VCPKG_INSTALLATION_ROOT%\bootstrap-vcpkg.bat
+      - shell: powershell
+        run: |
+          # Build only release libraries, not debug
+          Add-Content $env:VCPKG_INSTALLATION_ROOT\triplets\x64-windows-static.cmake "set(VCPKG_BUILD_TYPE release)"
+          # GLib is a dependency of cairo that must be dynamically linked
+          Add-Content $env:VCPKG_INSTALLATION_ROOT\triplets\x64-windows-static.cmake "if(PORT MATCHES ""glib"")`n`tset(VCPKG_LIBRARY_LINKAGE dynamic)`n`tset(VCPKG_CRT_LINKAGE dynamic)`nendif()"
+          vcpkg install --triplet x64-windows-static cairo libjpeg-turbo sqlite3 libpng openssl pthreads
       - name: Build
         shell: powershell
         run: |
           mkdir build
-          echo test > build\test
-          try { Invoke-WebRequest https://github.com/Cosmic-Sans/collab-vm-server/releases/download/prerelease/hello -OutFile hello } catch {}
+          mkdir install
+          cd build
+          cmake -G "Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=D:/a/collab-vm-server/collab-vm-server/install/ -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static ..
+          cmake --build . --target install --config RelWithDebInfo
+          Compress-Archive -Path D:\a\collab-vm-server\collab-vm-server\install\ -DestinationPath collab-vm-win64.zip
+          try { Invoke-WebRequest https://github.com/Cosmic-Sans/collab-vm-server/releases/download/prerelease/collab-vm-linux64.tar.gz -OutFile collab-vm-linux64.tar.gz } catch {}
       - name: Upload Release Asset
         uses: marvinpinto/action-automatic-releases@v0.2.2
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: true
           automatic_release_tag: prerelease
       - uses: ncipollo/release-action@v1
@@ -23,5 +44,5 @@ jobs:
           allowUpdates: true
           tag: prerelease
           prerelease: true
-          artifacts: "hello,build/test"
+          artifacts: "collab-vm-win64.zip,collab-vm-linux64.tar.gz"
           token: ${{ secrets.GITHUB_TOKEN }}
