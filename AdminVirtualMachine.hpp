@@ -99,6 +99,7 @@ struct AdminVirtualMachine
       : VmTurnController(strand),
         VmVoteController(strand),
         VmUserChannel(id),
+        connect_delay_timer_(strand),
         message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
         settings_(GetInitialSettings(initial_settings)),
         guacamole_client_(strand, admin_vm),
@@ -354,6 +355,20 @@ struct AdminVirtualMachine
       guacamole_client_.SetArguments(std::move(params_map));
     }
 
+    void StartGuacamoleClient()
+    {
+      const auto protocol =
+        GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
+      if (protocol == VmSetting::Protocol::RDP)
+      {
+        guacamole_client_.StartRDP();
+      }
+      else if (protocol == VmSetting::Protocol::VNC)
+      {
+        guacamole_client_.StartVNC();
+      }
+    }
+
     [[nodiscard]]
     bool HasCurrentTurn(const std::shared_ptr<TClient>& user) const
     {
@@ -461,6 +476,7 @@ struct AdminVirtualMachine
 
     bool active_ = false;
     bool connected_ = false;
+    boost::asio::steady_timer connect_delay_timer_;
     std::size_t viewer_count_ = 0;
     std::unique_ptr<capnp::MallocMessageBuilder> message_builder_;
     capnp::List<VmSetting>::Builder settings_;
@@ -494,16 +510,7 @@ struct AdminVirtualMachine
       UpdateVmInfo();
 
       state.SetGuacamoleArguments();
-      const auto protocol =
-        state.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
-      if (protocol == VmSetting::Protocol::RDP)
-      {
-        state.guacamole_client_.StartRDP();
-      }
-      else if (protocol == VmSetting::Protocol::VNC)
-      {
-        state.guacamole_client_.StartVNC();
-      }
+      state.StartGuacamoleClient();
     });
   }
 
@@ -522,6 +529,7 @@ struct AdminVirtualMachine
       }
 
       state.active_ = false;
+      state.connect_delay_timer_.cancel();
       state.guacamole_client_.Stop();
     });
   }
@@ -737,16 +745,15 @@ private:
         {
           return;
         }
-        const auto protocol =
-          state.GetSetting(VmSetting::Setting::PROTOCOL).getProtocol();
-        if (protocol == VmSetting::Protocol::RDP)
-        {
-          state.guacamole_client_.StartRDP();
-        }
-        else if (protocol == VmSetting::Protocol::VNC)
-        {
-          state.guacamole_client_.StartVNC();
-        }
+        state.connect_delay_timer_.expires_after(std::chrono::seconds(1));
+        state.connect_delay_timer_.async_wait(
+          state_.wrap([](auto& state, auto error_code)
+          {
+            if (!error_code && state.active_)
+            {
+              state.StartGuacamoleClient();
+            }
+          }));
       });
   }
 
