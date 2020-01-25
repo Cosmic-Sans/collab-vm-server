@@ -1,0 +1,5 @@
+.guac-keyboard .guac-keyboard-key.guac-keyboard-disabled {
+    background: #CCC;
+    border-color: #BBB;
+	cursor: default;
+}

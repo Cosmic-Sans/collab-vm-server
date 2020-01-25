@@ -1,0 +1,46 @@
+notifications:
+  email: false
+language: node_js
+node_js:
+- node
+sudo: required
+services:
+- docker
+before_install:
+- docker run -dit --name emscripten -v $(pwd):/src trzeci/emscripten:sdk-incoming-64bit
+  bash
+script:
+- mkdir -p build/capnp_tool
+- docker exec -it emscripten sh -c "cd build/capnp_tool && cmake -DCMAKE_INSTALL_PREFIX=install
+  -DBUILD_TESTING=OFF ../../submodules/collab-vm-common/submodules/capnproto/ && cmake
+  --build . --target install"
+- mkdir -p build/collab-vm-web-app
+- docker exec -it emscripten sh -c "cd build/collab-vm-web-app && emcmake cmake -DCAPNP_ROOT=../capnp_tool/install
+  ../.. && cmake --build ."
+- node ./node_modules/webpack-cli/bin/cli.js --config ./webpack.prod.js
+- mv dist/ web-app/
+- tar -czvf web-app.tar.gz web-app/
+before_deploy:
+    # Move the tag to the most recent commit, but delete it first
+    # so GitHub updates the timestamp of the release
+  - git checkout "$TRAVIS_BRANCH"
+  - git config credential.helper "store --file=.git/credentials"
+  - echo "https://${GH_TOKEN}:@github.com" > .git/credentials
+  - git push --delete origin prerelease || true
+  - git tag --force prerelease HEAD
+  - git push --force --tags origin prerelease
+deploy:
+  provider: releases
+  file: web-app.tar.gz
+  prerelease: true
+  draft: false
+  overwrite: true
+  skip_cleanup: true
+  on:
+    branch: master
+    tags: false
+  api_key:
+    secure: YjFP2MkkNAPtFXv61OBo6qLw3+6lzGXNUXbWYFcEsvtccHgdZsuuFuCY1lB4QAgylDc0CnlTiVVT4wYVDsnmQI46ggxbbXOQzl2tZUQ8gsA9NqEA/DXRhJAQudiHNTHyunMnlLU34+T/ZGPVUzG190UI+i6vOV9NCBw+VTRxLZKGA0Fm1vBJ6qzTCdqIKWWNOcNiJ5b6MA0LSzt6GO6brdKnnm9gzaEY1WCMCBz58Bm56tZs/szQm8y+lMUb9hjt2VaZaDvk5jzpeI1bWAc9MdPd3ORTH08D46N+4LUG300i5hGdDnavRS4+dKgTZ4BYv3DwM69y+NEjlwYl5NawbKIKqdtfBCaK72lFzeQ4TAWAO1OHDdRK1k2C31lEX2/1RGT5s4t7ezIXrvJedgg6qtPZrJkdmpBxZ+j7RuF8z9DjmWI3krln4DgpWk81sBjCt4UCfDGrdMj0pMkccOuXRlyIIwriEO2bCyQP5IciKmF0iJsAMu8rohL/OvUuHq8hRY10oQjJ5cnbbztW77/bsjou0qoM4JyHPqnefepyFkPnRz0gRWs5ksd1EsXiLGsULcBuscZDTYVEht1ew1JlMHAbdPOEPzVfzjK9l5a83onILG1enwWszfCHZpy3TVMSN7Ienkx/sXlfy85YXFaPzwTv1JWry+bjUk9cBbBvEMA=
+env:
+  global:
+    secure: ObdZAqe3XjOTKeiww+1c3TGtK7y19Wa4kQ54lrEYuvTWgTCbRnQ6CSr0Bo5ubxJ6POwxsR51pRBBnMxFpmsyY0WxkDRjLnup95v0ernG+Xlsd1Y4Oot9eI+z28/dTgmuuQa39ZSgCmvsDMsLRppRHg2FT6nbRKPo1rO3VvWOURSSEa7a1QVzcskZvXuaoPc94WHBASWgmmd2hBOfC8h2gn95lGCwKpVe81URml+NkHCgwndmM1NdFa604j/3jcdPPTyEJsvR0Z3p54dhLKFzgEh4JLVsuWay1iCZPn4jqCXIxmi7pgoxJhBJ5UQUuxTiBUGZ15nzb3Ixt3eTAt07LLu9CNOFyxvv1zxtAJkSzIwp0XSJ4u94E3izahAPfgsX2d6PneDMlvBzl0AIBnFij80OErK29rnYdhwBmWadQXcbWjCPe1NDrKLAYLwQXOM0DgIHUOZY4vQ3maa51GbqCdUHcLd9EdiFRvXXBNqbKkGXedCzL6WqVrjFz/swvL3fRgo3TUnt6OCodUZVMPPN7KjuOFIAy3R1r1pmWrfJSTsIil5TxgshbcEsut+QL4wEGu1Wc3fJfzT5/RBiiFCMEQyrNS72qbzcT1mEtpTtc/wjY5bXyDOGiKmPQ9z6bF3s8ZBGxhbzi2dxmXtFWZcqjYWR0Jw+vp5VHKQIuWq/lBU=

@@ -1,0 +1,109 @@
+<style>
+div#display-outer {
+  width: 100%;
+  display: table;
+  vertical-align: middle;
+  text-align: center;
+  margin-top: 38px;
+}
+div#display {
+  display: inline-block;
+}
+.chat-timestamp {
+  float: right;
+}
+</style>
+<div id="vm-view" style="display: none;">
+  <div style="text-align: center">
+    <h2><small>Click the screen to request a turn and control the computer!</small></h2>
+  </div>
+  <div id="display-outer">
+    <div id="display"></div>
+    <div style="display:none;" class="alert alert-info alert-dismissible" role="alert" id="vote-alert">
+        Do you want to reset the VM?
+        <button type="button" class="ui button" id="vote-yes-button">Yes</button>
+        <button type="button" class="ui button" id="vote-no-button">No</button>
+        <button type="button" class="close" aria-label="Close" id="vote-dismiss-button"><span aria-hidden="true">&times;</span></button>
+    </div>
+    <div style="display:none;" id="vote-status">
+      <h3><small>Votes for VM Reset (<span id="vote-time"></span>)</small></h3>
+      <h4><span class="label label-success">Yes: <span id="vote-label-yes"></span></span> <span class="label label-danger">No: <span id="vote-label-no"></span></span></h4>
+    </div>
+    <!--<div class="progress">
+      <div class="progress-bar progress-bar-success" style="width: 60%">
+        <span>Yes</span>
+      </div>
+      <div class="progress-bar progress-bar-danger" style="width: 40%">
+        <span>No</span>
+      </div>
+    </div>-->
+    <div class="ui centered grid">
+      <div class="row">
+        <button class="ui button" type="button" id="osk-btn"><i class="keyboard icon"></i> Keyboard</button>
+        <button style="display: none;" class="ui button" type="button" id="change-username-button"><i class="user icon"></i> Change Username</button>
+        <button style="display: none;" class="ui button" type="button" id="start-vote-button"><i class="poll icon"></i> Vote for Reset</button>
+        <button style="display: none;" class="ui button" type="button" id="upload-options-btn"><i class="cloud upload icon"></i> Upload File</button>
+        <button class="ui button" type="button" id="end-turn-btn"><i class="stop icon"></i>End Turn</button>
+        <button class="ui button" type="button" id="mute-button"><i class="volume up icon"></i>Mute</button>
+        <button style="display: none;" class="ui button" type="button" id="picture-in-picture-button"><i class="images outline icon"></i> Picture-in-Picture</button>
+        <div id="file-upload" class="form-inline" style="display: none;">
+          <input class="form" id="upload-input" type="file">
+          <!--<label for="filename-box">Filename</label><input type="text" class="form-control" id="filename-box" placeholder="filename">-->
+          <label><input type="checkbox" id="upload-run-chkbox" checked>Run file</label>
+          <button class="ui button" type="button" id="upload-btn" disabled>Upload</button>
+          <div id="upload-wait-time"></div>
+        </div>
+      </div>
+      <div id="admin-controls" class="row" style="display: none;">
+        <button class="ui button" type="button" id="pause-turns-btn"><i class="pause icon"></i>Pause Turn</button>
+        <button class="ui button" type="button" id="resume-turns-btn"><i class="play icon"></i>Resume Turn</button>
+      </div>
+    </div>
+    <h3 style="height: 2em;"><small id="status"></small></h3>
+  </div>
+  <div id="kbd-container">
+    <div class="osk" id="kbd-outer" style="display: none;">
+      <div class="osk" id="kbd-keys"></div>
+      <br>
+    </div>
+  </div>
+  <div id="vm-description" style="text-align:center">
+  </div>
+  <div class="ui grid" style="margin-left: 0rem;">
+    <div class="four wide column">
+      <h4 class="ui top attached header" style="background: #EEEEEE;">
+        Users Online: <span id="online-users-count"></span>
+      </h4>
+      <div class="ui attached segment">
+          <div id="online-users" class="ui celled list">
+          </div>
+      </div>
+    </div>
+    <div class="twelve wide column">
+      <div style="position: relative;min-height: 246px; margin-bottom: 10px;">
+        <ul id="chat-panel" class="list-group-item message-pane-wrapper">
+          <div id="chat-box" class="message-pane">
+          </div>
+        </ul>
+      </div>
+      <div class="ui fluid labeled action input">
+        <span id="chat-user" class="ui label"></span>
+        <input id="chat-input" type="text" class="form-control" aria-describedby="user-label" disabled>
+        <span class="ui labeled input">
+          <button id="chat-send-btn" class="ui button" type="button" disabled>Send</button>
+        </span>
+      </div>
+    </div>
+  </div>
+  <div id="change-username-modal" class="ui mini modal">
+    <div class="header">
+      Change Username
+    </div>
+    <div class="content">
+      <input id="new-username-input" type="text" class="form-control">
+      <div class="actions">
+        <button class="ui ok button" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>

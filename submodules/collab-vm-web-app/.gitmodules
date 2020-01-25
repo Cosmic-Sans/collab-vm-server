@@ -1,0 +1,4 @@
+[submodule "guacamole-client"]
+	path = submodules/guacamole-client
+	url = https://github.com/Cosmic-Sans/guacamole-client.git
+	branch = master

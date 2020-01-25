@@ -1,0 +1,68 @@
+<script src="https://www.google.com/recaptcha/api.js?render=explicit" async defer></script>
+<div id="login-register-container" class="ui middle aligned center aligned grid" style="display: none;">
+  <div class="login-column">
+    <div class="ui large form">
+      <div class="ui stacked segment">
+        <div class="field">
+          <div class="ui left icon input">
+            <i class="user icon"></i>
+            <input type="text" id="username-box" placeholder="Username" autocomplete="off">
+          </div>
+        </div>
+        <div class="field">
+          <div class="ui left icon input">
+            <i class="lock icon"></i>
+            <input type="password" id="password-box" placeholder="Password" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="login-form">
+          <div id="login-button" class="ui fluid large positive submit button">Login</div>
+        </div>
+
+        <div id="register-form">
+          <!--
+          <div class="field">
+            <div id="enable-2fa-toggle" class="ui toggle checkbox">
+              <input type="checkbox" name="public" autocomplete="off">
+              <label>Enable Two-Factor Authentication (2FA)</label>
+            </div>
+            <p>Two-Factor authentication requires an app such as Google Authenticator.</p>
+          </div>
+          -->
+          <div id="activate-2fa-modal" class="ui basic modal">
+            <div class="ui icon header">
+              <i class="lock icon"></i>
+              Active Two-Factor Authentication
+            </div>
+            <div class="content" style="text-align: center;">
+              <div>
+                <span id="qrcode" style="display: inline-block; padding: 5px; background-color: white;"></span>
+              </div>
+              <br>
+              <div class="ui left icon input">
+                <i class="hashtag icon"></i>
+                <input type="text" onkeypress="" id="validate-2fa-box" placeholder="Passcode" autocomplete="off">
+              </div>
+              <p>Scan the QR code with your app and enter the passcode to continue.</p>
+            </div>
+            <div class="actions">
+              <div id="cancel-2fa-button" class="ui red basic cancel inverted button">
+                <i class="remove icon"></i>
+                Cancel
+              </div>
+              <div id="activate-2fa-button" class="ui green ok inverted button">
+                <i class="checkmark icon"></i>
+                Continue
+              </div>
+            </div>
+          </div>
+          <div id="register-button" class="ui fluid large positive submit button">Register</div>
+        </div>
+
+        <div class="field" id="captcha"></div>
+        <div id="login-register-status" class="ui error message"></div>
+      </div>
+    </div>
+  </div>
+</div>

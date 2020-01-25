@@ -1,0 +1,104 @@
+.message-pane-wrapper {
+	border-radius: 4px;
+	clear: both;
+	overflow: auto;
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	height: auto;
+	width: auto;
+	margin: 0 0px 31px 0;
+	margin-bottom: 0;
+	background-color: #eee;
+	font-size: 13px;
+	padding: 0 5px;
+	border: 1px solid #ddd;
+}
+
+.message-pane {
+	padding-top: 1px;
+}
+
+.message-pane li {
+	cursor: default;
+	border-bottom: 1px solid #ccc;
+	box-shadow: 0 1px 0 0 white;
+}
+
+.message-pane small {
+	display: none;
+	font-size: 10px;
+	position: absolute;
+	background-color: #f7f7f7;
+	text-align: center;
+	line-height: 20px;
+	margin: 4px 0;
+	padding: 0 5px;
+	right: 5px;
+}
+
+.message-pane li:hover {
+	background-color: #f7f7f7;
+}
+
+.message-pane li:hover small {
+	display: block;
+}
+
+.message-pane li>div {
+	overflow: auto;
+	padding: 2px 0 2px 0;
+	line-height: 24px;
+	white-space: -o-pre-wrap; /* Opera */
+	word-wrap: break-word; /* Internet Explorer 5.5+ */
+}
+
+.message-pane li>div p {
+	margin: 0;
+}
+
+.message-pane .username {
+	font-weight: bold;
+	white-space: nowrap;
+	display: block;
+	float: left;
+	overflow: hidden;
+	text-align: right;
+	color: black;
+}
+
+.message-pane .spacer {
+    font-size: 14px;
+    margin-right: 5px;
+}
+
+/* User has turn */
+.item.has-turn {
+    background-color: #CFF2FC;
+}
+
+/* User is waiting for turn */
+.item.waiting-turn {
+    background-color: #FFFFB3;
+}
+
+.guest.username {
+  color: gray;
+}
+
+.registered.username {
+  color: initial;
+}
+
+.admin.username {
+  color: firebrick;
+}
+
+#display.focused {
+  box-shadow: 0px 0px 9px 0px rgba(45, 213, 255, 0.75);
+}
+#display.waiting {
+  box-shadow: 0px 0px 9px 0px rgba(242, 255, 63, 0.75);
+}
