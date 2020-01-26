@@ -25,21 +25,24 @@ cache:
   directories:
     - ../vcpkg/
 script:
+  # - Build collab-vm-web-app 
   # - Update Alpine Linux package repository to edge
   # - Install Alpine Linux packages
   # - Create libintl.h to workaround a bug with the gettext vcpkg package
   # - Install vcpkg packages
   # - Build collab-vm-server
+  - docker exec -it emscripten sh -c "cd submodules/collab-vm-web-app && mkdir -p build/capnp_tool && cd build/capnp_tool && cmake -DCMAKE_INSTALL_PREFIX=install -DBUILD_TESTING=OFF ../../submodules/collab-vm-common/submodules/capnproto/ && cmake --build . --target install && cd ../.. && mkdir -p build/collab-vm-web-app && cd build/collab-vm-web-app && emcmake cmake -DCAPNP_ROOT=../capnp_tool/install ../.. && cmake --build . && node ./node_modules/webpack-cli/bin/cli.js --config ./webpack.prod.js && mv dist/ web-app/ && tar -czvf web-app.tar.gz web-app/"
   - docker exec -it musl sh -c "sed -i -e 's/v[[:digit:]]\..*\//edge\//g' /etc/apk/repositories && apk update && apk add --no-cache curl perl unzip tar make cmake ninja git && mkdir -p /usr/include/ && touch /usr/include/libintl.h && /src/vcpkg/bootstrap-vcpkg.sh -useSystemBinaries && /src/vcpkg/vcpkg install cairo libjpeg-turbo sqlite3 libpng openssl && mkdir /src/collab-vm-server/build/ && cd /src/collab-vm-server/build/ && cmake -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_CXX_FLAGS='-static -static-libgcc -static-libstdc++' -DCMAKE_TOOLCHAIN_FILE=/src/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-musl .. && cmake --build . --target collab-vm-server && ls -l -a"
 before_deploy:
   - mkdir $OUTPUT
   # Download and extract web-app
-  - wget https://github.com/Cosmic-Sans/collab-vm-web-app/releases/download/prerelease/web-app.tar.gz
-  - tar xfz web-app.tar.gz --directory=$OUTPUT/
+  - tar xfz submodules/collab-vm-web-app/web-app.tar.gz --directory=$OUTPUT/
   # Find libvncserver example and copy it into the output directory
   - cp $(find build/ -name example -type f -print -quit) $OUTPUT/vnc-demo
   - cp build/collab-vm-server $OUTPUT/
   - tar -zcvf $OUTPUT.tar.gz $OUTPUT/
+  # Copy web-app and copy it into the output directory.
+  - cp submodules/collab-vm-web-app/web-app.tar.gz $OUTPUT/
   - git tag --force prerelease HEAD
   - export TRAVIS_TAG=prerelease
   # Move the tag to the most recent commit, but delete it first
@@ -55,7 +58,9 @@ before_deploy:
 deploy:
   provider: releases
   tag_name: prerelease
-  file: $OUTPUT.tar.gz
+  file: 
+    - $OUTPUT.tar.gz
+    - web-app.tar.gz
   prerelease: true
   draft: false
   overwrite: true
