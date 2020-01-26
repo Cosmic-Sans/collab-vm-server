@@ -386,6 +386,12 @@ namespace CollabVm::Server
           {
             break;
           }
+          if (!CollabVm::Common::IsGuacamoleClientInstructionAllowed(
+                message.getGuacInstr().which()))
+          {
+            TSocket::Close();
+            break;
+          }
           server_.virtual_machines_.dispatch([
             this, self = shared_from_this(),
             channel_id = connected_vm_id_, message, buffer = std::move(buffer)]
