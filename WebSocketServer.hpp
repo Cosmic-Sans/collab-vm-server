@@ -4,6 +4,8 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
+#include <boost/range/algorithm/mismatch.hpp>
+#include <boost/range/algorithm/find_first_of.hpp>
 #include <cerrno>
 #include <filesystem>
 #include <cassert>
@@ -159,12 +161,24 @@ class WebServerSocket : public std::enable_shared_from_this<
       beast::http::async_read_header(
           socket.socket, buffer_, parser_,
           socket_.wrap([ this, self = std::move(self) ](
-              auto& sockets, const boost::system::error_code ec,
+              auto& sockets, boost::system::error_code ec,
               std::size_t bytes_transferred) mutable {
             if (ec) {
               return;
             }
             auto& request = parser_.get();
+            // Try to get the client's actual IP from the headers
+            if (sockets.socket.lowest_layer().remote_endpoint(ec).address().is_loopback()) {
+              const auto ip_address_str = GetIpAddressFromHeader(request);
+              if (!ip_address_str.empty()) {
+                auto error_code = boost::system::error_code();
+                const auto ip_address = boost::asio::ip::make_address(ip_address_str, error_code);
+                if (!error_code) {
+                  ip_address_ = ip_address;
+                }
+              }
+            }
+
             if (request.method() == beast::http::verb::get) {
               // Accept WebSocket connections
               if (request.target() == "/") {
@@ -489,6 +503,28 @@ class WebServerSocket : public std::enable_shared_from_this<
     beast::websocket::stream<asio::ip::tcp::socket&> websocket;
     // asio::ssl::stream<asio::ip::tcp::socket&> stream_;
   };
+
+  static std::string_view GetIpAddressFromHeader(const boost::beast::http::fields& fields) {
+    if (const auto header = fields.find(beast::http::field::forwarded);
+        header != fields.end()) {
+      auto value = header->value();
+      value.remove_prefix(boost::algorithm::ifind_first(value, "for=").end() - value.begin());
+      if (!value.empty()) {
+        value.remove_prefix(boost::range::mismatch(value, "\"[").first - value.begin());
+        value.remove_suffix(value.end() - boost::range::find_first_of(value, ";,]\""));
+        return value;
+      }
+    }
+    if (const auto header = fields.find("X-Forwarded-For");
+        header != fields.end()) {
+      return *boost::beast::http::token_list(header->value()).begin();
+    }
+    if (const auto header = fields.find("X-Real-IP");
+        header != fields.end()) {
+      return header->value();
+    }
+    return "";
+  }
 
   StrandGuard<boost::asio::io_context::strand, SocketsWrapper> socket_;
 
