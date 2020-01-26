@@ -17,7 +17,6 @@ extern "C" {
 # undef min
 # undef max
 #endif
-#include <guacenc/instructions.h>
 #include <libguac/user-handlers.h>
 
 #include <atomic>
@@ -33,6 +32,7 @@ extern "C" {
 #include <unordered_map>
 
 #include "Guacamole.capnp.h"
+#include "GuacamoleScreenshot.hpp"
 
 namespace CollabVm::Server
 {
@@ -141,66 +141,16 @@ public:
       return false;
     }
 
-    const auto display = guacenc_display_alloc(nullptr, nullptr, 0, 0, 0);
-    AddUser([display](auto&& message_builder)
+    auto screenshot = GuacamoleScreenshot();
+    AddUser([&screenshot](auto&& message_builder)
     {
-      guacenc_handle_instruction(
-        display, message_builder.template getRoot<Guacamole::GuacServerInstruction>());
+      screenshot.WriteInstruction(
+        message_builder.template getRoot<Guacamole::GuacServerInstruction>());
     });
-    // The default layer should now contain the flattened image
-    const auto default_layer = guacenc_display_get_layer(display, 0);
-    if (!default_layer->buffer)
-    {
-      return false;
-    }
-    const auto& surface = *default_layer->buffer;
-    if (!surface.cairo || !surface.surface)
-    {
-      return false;
-    }
 
-    int width;
-    int height;
-    float scale_xy;
-    if (surface.width > surface.height)
-    {
-      width = 400;
-      scale_xy = 400.0 / surface.width;
-      height = scale_xy * surface.height;
-    }
-    else
-    {
-      height = 400;
-      scale_xy = 400.0 / surface.height;
-      width = scale_xy * surface.width;
-    }
-
-    const auto target =
-      cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
-
-    const auto cairo_context = cairo_create(target);
-    cairo_scale(cairo_context, scale_xy, scale_xy);
-
-    cairo_set_source_surface(cairo_context, surface.surface, 0, 0);
-    cairo_paint(cairo_context);
-
-    const auto result =
-      cairo_surface_write_to_png_stream(target,
-        [](void* closure,
-           const unsigned char* data,
-           unsigned int length)
-        {
-          const auto& callback = *reinterpret_cast<TWriteCallback*>(closure);
-          callback(gsl::span(reinterpret_cast<const std::byte*>(data), length));
-          return CAIRO_STATUS_SUCCESS;
-        }, &callback);
-
-    cairo_destroy(cairo_context);
-    cairo_surface_destroy(target);
-    guacenc_display_free(display);
-
-    return result == CAIRO_STATUS_SUCCESS;
+    return screenshot.CreateScreenshot(400, 400, std::forward<TWriteCallback>(callback));
   }
+
 private:
   static ssize_t SocketWriteHandler(guac_socket* socket, void* data)
   {

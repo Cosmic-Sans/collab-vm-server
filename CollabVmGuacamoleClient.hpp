@@ -59,29 +59,15 @@ struct CollabVmGuacamoleClient final
       return;
     }
     auto instruction_queue =
-      std::make_shared<std::vector<std::shared_ptr<SocketMessage>>>(
+      std::make_shared<std::vector<std::shared_ptr<SharedSocketMessage>>>(
         std::move(instruction_queue_));
     lock.unlock();
 
-    admin_vm_.GetUserChannel(
-      [instruction_queue = std::move(instruction_queue)](auto& channel) {
-        channel.ForEachUser(
-          [instruction_queue = std::move(instruction_queue)]
-          (const auto&, auto& user)
-          {
-            user.QueueMessageBatch([instruction_queue](auto enqueue)
-            {
-              for (auto& instruction : *instruction_queue)
-              {
-                enqueue(instruction);
-              }
-            });
-          });
-      });
+    admin_vm_.OnGuacamoleInstructions(std::move(instruction_queue));
   }
 
   TAdminVirtualMachine& admin_vm_;
-  std::vector<std::shared_ptr<SocketMessage>> instruction_queue_;
+  std::vector<std::shared_ptr<SharedSocketMessage>> instruction_queue_;
   std::mutex instruction_queue_mutex_;
 };
 

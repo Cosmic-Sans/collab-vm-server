@@ -12,22 +12,27 @@ struct SocketMessage : std::enable_shared_from_this<SocketMessage>
 {
   virtual ~SocketMessage() noexcept = default;
 
-  virtual std::vector<boost::asio::const_buffer>& GetBuffers() = 0;
+  virtual const std::vector<boost::asio::const_buffer>& GetBuffers() const = 0;
   virtual void CreateFrame() = 0;
+  virtual capnp::AnyPointer::Reader GetRoot() const = 0;
+  template<typename T>
+  typename T::Reader GetRoot() const {
+    return GetRoot().getAs<T>();
+  }
 
   static std::shared_ptr<SharedSocketMessage> CreateShared() {
     return std::make_shared<SharedSocketMessage>();
   }
 
   static std::shared_ptr<CopiedSocketMessage> CopyFromMessageBuilder(
-    capnp::MallocMessageBuilder& message_builder) {
+    capnp::MessageBuilder& message_builder) {
     return std::make_shared<CopiedSocketMessage>(message_builder);
   }
 };
 
 struct SharedSocketMessage final : SocketMessage
 {
-  std::vector<boost::asio::const_buffer>& GetBuffers() override {
+  const std::vector<boost::asio::const_buffer>& GetBuffers() const override {
     assert(!framed_buffers_.empty());
     return framed_buffers_;
   }
@@ -58,9 +63,14 @@ struct SharedSocketMessage final : SocketMessage
     }
   }
 
+  capnp::AnyPointer::Reader GetRoot() const override {
+    return const_cast<capnp::MallocMessageBuilder&>(
+      shared_message_builder).getRoot<capnp::AnyPointer>();
+  }
+
   ~SharedSocketMessage() noexcept override { }
 
-  capnp::MallocMessageBuilder& GetMessageBuilder() {
+  capnp::MessageBuilder& GetMessageBuilder() {
     assert(frame_.empty() && framed_buffers_.empty());
     return shared_message_builder;
   }
@@ -72,22 +82,29 @@ private:
 };
 
 struct CopiedSocketMessage final : SocketMessage {
-  CopiedSocketMessage(capnp::MallocMessageBuilder& message_builder)
+  CopiedSocketMessage(capnp::MessageBuilder& message_builder)
     : buffer_(capnp::messageToFlatArray(message_builder)),
-    framed_buffers_(
-      { boost::asio::const_buffer(buffer_.asBytes().begin(),
-                                 buffer_.asBytes().size()) }) {}
+      framed_buffers_(
+        { boost::asio::const_buffer(buffer_.asBytes().begin(),
+          buffer_.asBytes().size()) }),
+      reader_(buffer_) {
+  }
 
   ~CopiedSocketMessage() noexcept override { }
 
-  std::vector<boost::asio::const_buffer>& GetBuffers() override {
+  const std::vector<boost::asio::const_buffer>& GetBuffers() const override {
     return framed_buffers_;
   }
   void CreateFrame() override {
   }
+  capnp::AnyPointer::Reader GetRoot() const override {
+    return const_cast<capnp::FlatArrayMessageReader&>(
+      reader_).getRoot<capnp::AnyPointer>();
+  }
 private:
-  kj::Array<capnp::word> buffer_;
-  std::vector<boost::asio::const_buffer> framed_buffers_;
+  const kj::Array<capnp::word> buffer_;
+  const std::vector<boost::asio::const_buffer> framed_buffers_;
+  capnp::FlatArrayMessageReader reader_;
 };
 
 }

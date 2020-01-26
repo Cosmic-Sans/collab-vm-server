@@ -27,11 +27,11 @@
 #include "SocketMessage.hpp"
 #include "Database/Database.h"
 #include "GuacamoleClient.hpp"
+#include "GuacamoleScreenshot.hpp"
 #include "CaptchaVerifier.hpp"
 #include "StrandGuard.hpp"
 #include "Totp.hpp"
 #include "TurnController.hpp"
-#include "VoteController.hpp"
 #include "UserChannel.hpp"
 #include "AdminVirtualMachine.hpp"
 #include "IPData.hpp"
@@ -1006,8 +1006,10 @@ namespace CollabVm::Server
               changed_settings
           ](auto& settings) mutable
             {
-              settings.UpdateServerSettings(changed_settings);
-              server_.ApplySettings();
+              settings.UpdateServerSettings(changed_settings,
+                [this](auto new_settings, auto current_settings) {
+                  server_.ApplySettings(new_settings, current_settings);
+                });
               auto config_message = SocketMessage::CopyFromMessageBuilder(
                 settings.GetServerSettingsMessageBuilder());
               // Broadcast the config changes to all other admins viewing the
@@ -1458,6 +1460,16 @@ namespace CollabVm::Server
           }
           break;
         }
+        case CollabVmClientMessage::Message::RECORDING_PREVIEW_REQUEST:
+        {
+          if (is_admin_)
+          {
+            SendRecordingPreviews(
+              std::move(buffer),
+              message.getRecordingPreviewRequest());
+          }
+          break;
+        }
         default:
           TSocket::Close();
         }
@@ -1818,6 +1830,220 @@ namespace CollabVm::Server
           });
       }
 
+      void SendRecordingPreviews(
+          std::shared_ptr<CollabVmMessageBuffer>&& buffer,
+          CollabVmClientMessage::RecordingPreviewRequest::Reader request) {
+        const auto sendResult = [this](bool result) {
+          auto socket_message = SocketMessage::CreateShared();
+          auto& message_builder = socket_message->GetMessageBuilder();
+          message_builder.initRoot<CollabVmServerMessage>()
+                         .initMessage()
+                         .setRecordingPlaybackResult(result);
+          QueueMessage(std::move(socket_message));
+        };
+        if (!request.getStartTime() || !request.getStopTime()) {
+          sendResult(false);
+          return;
+        }
+        std::uint64_t current_timestamp = request.getStartTime();
+        while (current_timestamp < request.getStopTime()) {
+          const auto [file_path, file_start_time, file_stop_time] =
+            server_.db_.GetRecordingFilePath(
+              request.getVmId(),
+              std::chrono::time_point<std::chrono::system_clock>(
+                std::chrono::milliseconds(current_timestamp)),
+              std::chrono::time_point<std::chrono::system_clock>(
+                std::chrono::milliseconds(request.getStopTime())));
+          if (file_path.empty()) {
+            sendResult(false);
+            return;
+          }
+          auto file_stream =
+            std::ifstream(file_path, std::ifstream::in | std::ifstream::binary);
+          if (!file_stream.is_open()) {
+            current_timestamp =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                file_stop_time.time_since_epoch()).count();
+            if (!current_timestamp) {
+              current_timestamp =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                  file_start_time.time_since_epoch()).count() + 1;
+            }
+            if (current_timestamp) {
+              continue;
+            }
+            sendResult(false);
+            return;
+          }
+          struct RecordingFileStream {
+            std::vector<RecordingFileHeader::Keyframe::Reader> keyframes_;
+            capnp::MallocMessageBuilder file_message_builder;
+            RecordingFileHeader::Reader file_header;
+            std::ifstream file_stream_;
+            kj::std::StdInputStream input_stream;
+            std::vector<RecordingFileHeader::Keyframe::Reader>::const_iterator keyframe_begin_;
+            std::uint64_t current_timestamp;
+            RecordingFileStream(std::ifstream&& file_stream)
+                : file_stream_(std::forward<std::ifstream>(file_stream)),
+                  input_stream(file_stream_) {
+              capnp::readMessageCopy(input_stream, file_message_builder);
+              file_header = file_message_builder.getRoot<RecordingFileHeader>();
+              auto keyframes = file_header.getKeyframes();
+              keyframes_.reserve(file_header.getKeyframesCount());
+              keyframes_.insert(keyframes_.end(), keyframes.begin(), keyframes.begin() + file_header.getKeyframesCount());
+              keyframe_begin_ = keyframes_.cbegin();
+              current_timestamp = file_header.getStartTime();
+            }
+            bool NextKeyframe() {
+              if (std::distance(keyframe_begin_, keyframes_.cend()) > 1) {
+                SeekToKeyframe(std::next(keyframe_begin_));
+                return true;
+              }
+              current_timestamp = GetNextFileTimestamp();
+              return false;
+            }
+            capnp::MallocMessageBuilder message_builder;
+            std::optional<Guacamole::GuacServerInstruction::Reader> ReadGuacamoleInstruction() {
+              std::optional<Guacamole::GuacServerInstruction::Reader> guacamole_instruction;
+              try {
+                CollabVmServerMessage::Message::Reader message;
+                do {
+                  capnp::readMessageCopy(input_stream, message_builder);
+                  message = message_builder.getRoot<CollabVmServerMessage>().getMessage();
+                } while (message.which() != CollabVmServerMessage::Message::Which::GUAC_INSTR);
+                guacamole_instruction = message.getGuacInstr();
+                if (guacamole_instruction->which() == Guacamole::GuacServerInstruction::Which::SYNC) {
+                  current_timestamp = guacamole_instruction->getSync();
+                }
+              } catch (const kj::Exception&) {
+                // End of file or deserialization error
+              }
+              return guacamole_instruction;
+            }
+            bool SeekToTimestamp(std::uint64_t timestamp) {
+              if (timestamp < file_header.getStartTime() || timestamp > file_header.getStopTime()) {
+                return false;
+              }
+              if (timestamp < current_timestamp) {
+                keyframe_begin_ = keyframes_.cbegin();
+              }
+              auto target_keyframe_message_builder = capnp::MallocMessageBuilder();
+              auto target_keyframe = target_keyframe_message_builder
+                .initRoot<RecordingFileHeader::Keyframe>();
+              target_keyframe.setTimestamp(timestamp);
+              auto keyframe = std::lower_bound(
+                std::make_reverse_iterator(keyframe_begin_),
+                keyframes_.crend(),
+                target_keyframe,
+                [](auto a, auto b) {
+                  return a.getTimestamp() > b.getTimestamp();
+                });
+              if (keyframe != keyframes_.crend()) {
+                const auto timestamp_index = keyframe.base() - keyframes_.begin(); //////
+                if (current_timestamp < keyframe->getTimestamp()
+                    || timestamp < current_timestamp) {
+                  SeekToKeyframe(keyframe.base());
+                }
+              }
+              return true;
+            }
+            [[nodiscard]]
+            std::uint64_t GetNextFileTimestamp() {
+              return std::max(file_header.getStartTime() + 1, file_header.getStopTime());
+            }
+          private:
+            void SeekToKeyframe(std::vector<RecordingFileHeader::Keyframe::Reader>::const_iterator keyframe) {
+              file_stream_.seekg(keyframe->getFileOffset());
+              keyframe_begin_ = keyframe;
+              current_timestamp = keyframe->getTimestamp();
+            }
+          };
+          try {
+            auto recording = RecordingFileStream(std::move(file_stream));
+            auto png = std::vector<std::byte>();
+            png.reserve(100 * 1'024);
+            auto screenshot = GuacamoleScreenshot();
+            recording.SeekToTimestamp(current_timestamp);
+            auto keyframe_changed = false;
+            while (current_timestamp < request.getStopTime()) {
+              if (keyframe_changed) {
+                screenshot = GuacamoleScreenshot();
+                keyframe_changed = false;
+              }
+              // Create a screenshot by reading one or more frames
+              const auto stop_after_single_frame = !request.getTimeInterval();
+              auto one_frame = false;
+              do {
+                // Read a whole frame
+                std::optional<Guacamole::GuacServerInstruction::Reader> message;
+                do {
+                  message = recording.ReadGuacamoleInstruction();
+                  if (!message) {
+                    break;
+                  }
+                  screenshot.WriteInstruction(*message);
+                } while (message->which() != Guacamole::GuacServerInstruction::Which::SYNC);
+                if (!message) {
+                  break;
+                }
+                one_frame = true;
+                // If time interval is zero, read only a single keyframe,
+                // otherwise read all frames that occurred before the timestamp
+              } while (!stop_after_single_frame
+                       && recording.current_timestamp < current_timestamp);
+              if (!one_frame) {
+                current_timestamp = recording.GetNextFileTimestamp();
+                break;
+              }
+              png.clear();
+              const auto created_screenshot =
+                screenshot.CreateScreenshot(
+                  request.getWidth(), request.getHeight(),
+                  [&png](auto png_bytes) {
+                    png.insert(png.end(), png_bytes.begin(), png_bytes.end());
+                  });
+              auto socket_message = SocketMessage::CreateShared();
+              auto& message_builder = socket_message->GetMessageBuilder();
+              auto thumbnail_message_builder =
+                message_builder.initRoot<CollabVmServerMessage>()
+                               .initMessage()
+                               .initRecordingPlaybackPreview();
+              thumbnail_message_builder.setTimestamp(recording.current_timestamp);
+              auto vm_thumbnail = thumbnail_message_builder.initVmThumbnail();
+              vm_thumbnail.setId(request.getVmId());
+              vm_thumbnail.setPngBytes(kj::ArrayPtr(
+                reinterpret_cast<kj::byte*>(png.data()),
+                png.size()));
+              QueueMessage(std::move(socket_message));
+
+              if (request.getTimeInterval()) {
+                current_timestamp = recording.current_timestamp + request.getTimeInterval();
+                if (!recording.SeekToTimestamp(current_timestamp)) {
+                  break;
+                }
+              } else {
+                const auto next_frame = recording.NextKeyframe();
+                current_timestamp = recording.current_timestamp;
+                if (!next_frame) {
+                  break;
+                }
+                keyframe_changed = true;
+              }
+            }
+          } catch (...) {
+            current_timestamp =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                file_stop_time.time_since_epoch()).count();
+            if (!current_timestamp) {
+              current_timestamp =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                  file_start_time.time_since_epoch()).count() + 1;
+            }
+          }
+        }
+        sendResult(true);
+      }
+
       CollabVmServer& server_;
       StrandGuard<std::queue<std::shared_ptr<SocketMessage>>> send_queue_;
       bool sending_ = false;
@@ -1862,7 +2088,14 @@ namespace CollabVm::Server
         guest_rng_(1'000, 99'999),
         vm_info_timer_(io_context_)
     {
-      ApplySettings();
+      settings_.dispatch([this](auto& settings)
+      {
+				ApplySettings(
+          settings.GetServerSettingsMessageBuilder()
+                  .template getRoot<CollabVmServerMessage>()
+                  .getMessage()
+                  .getServerSettings());
+      });
       StartVmInfoUpdate();
     }
 
@@ -1929,6 +2162,10 @@ namespace CollabVm::Server
       system(async_shell_command.c_str());
     }
 
+    Database& GetDatabase() {
+      return db_;
+    }
+
   protected:
     std::shared_ptr<typename TServer::TSocket> CreateSocket(
       boost::asio::io_context& io_context,
@@ -1939,13 +2176,30 @@ namespace CollabVm::Server
     }
 
   private:
-    void ApplySettings() {
-      settings_.dispatch([this](auto& settings)
-      {
-        captcha_verifier_.SetSettings(
-          settings.GetServerSetting(ServerSetting::Setting::CAPTCHA)
-							    .getCaptcha());
-      });
+    void ApplySettings(const capnp::List<ServerSetting>::Reader settings,
+      std::optional<capnp::List<ServerSetting>::Reader> previous_settings = {})
+    {
+      captcha_verifier_.SetSettings(
+        settings[ServerSetting::Setting::CAPTCHA].getSetting().getCaptcha());
+      auto recordings_message_builder = std::make_shared<capnp::MallocMessageBuilder>();
+      recordings_message_builder->setRoot(
+        settings[ServerSetting::Setting::RECORDINGS].getSetting().getRecordings());
+      auto recordings_settings =
+        recordings_message_builder->getRoot<ServerSetting::Recordings>();
+      virtual_machines_.dispatch(
+        [this, getRecordingSettings =
+          [recordings_settings, message_builder = std::move(recordings_message_builder)]() {
+            return recordings_settings;
+          }
+        ](auto& virtual_machines)
+        {
+          virtual_machines.ForEachAdminVm(
+            [getRecordingSettings = std::move(getRecordingSettings)]
+            (auto& vm)
+            {
+              vm.SetRecordingSettings(getRecordingSettings);
+            });
+        });
     }
 
     template <typename TCallback>
@@ -2050,15 +2304,19 @@ namespace CollabVm::Server
         return *settings_;
       }
 
+      template<typename TCallback>
       void UpdateServerSettings(
-        const capnp::List<ServerSetting>::Reader updates)
+        const capnp::List<ServerSetting>::Reader updates,
+        TCallback&& callback)
       {
         auto message_builder = std::make_unique<capnp::MallocMessageBuilder>();
-        auto list = InitSettings(*message_builder);
-        Database::UpdateList<ServerSetting>(settings_list_, list, updates);
-        settings_ = std::move(message_builder);
-        settings_list_ = list;
+        auto new_settings = InitSettings(*message_builder);
+        Database::UpdateList<ServerSetting>(settings_list_, new_settings, updates);
         db_.SaveServerSettings(updates);
+        auto current_settings = settings_list_;
+        settings_list_ = new_settings;
+        callback(new_settings, current_settings);
+        settings_ = std::move(message_builder);
       }
 
       static capnp::List<ServerSetting>::Builder InitSettings(
@@ -2531,7 +2789,7 @@ namespace CollabVm::Server
             TFunction::InitList(message_->GetMessageBuilder(), capacity);
         }
 
-        capnp::MallocMessageBuilder& GetMessageBuilder() const
+        capnp::MessageBuilder& GetMessageBuilder() const
         {
           return message_->GetMessageBuilder();
         }
@@ -2543,7 +2801,7 @@ namespace CollabVm::Server
       private:
         std::shared_ptr<SharedSocketMessage> message_;
         using ListType = std::invoke_result_t<decltype(TFunction::GetList),
-          capnp::MallocMessageBuilder&>;
+          capnp::MessageBuilder&>;
         ListType list_;
       };
 
@@ -2551,7 +2809,7 @@ namespace CollabVm::Server
       struct InitVmInfo
       {
         static capnp::List<CollabVmServerMessage::VmInfo>::Builder GetList(
-          capnp::MallocMessageBuilder& message_builder)
+          capnp::MessageBuilder& message_builder)
         {
           return message_builder
                  .getRoot<CollabVmServerMessage>().getMessage().
@@ -2559,7 +2817,7 @@ namespace CollabVm::Server
         }
 
         static capnp::List<CollabVmServerMessage::VmInfo>::Builder InitList(
-          capnp::MallocMessageBuilder& message_builder, unsigned size)
+          capnp::MessageBuilder& message_builder, unsigned size)
         {
           return message_builder
                  .initRoot<CollabVmServerMessage>().initMessage().
@@ -2570,7 +2828,7 @@ namespace CollabVm::Server
       struct InitAdminVmInfo
       {
         static capnp::List<CollabVmServerMessage::AdminVmInfo>::Builder GetList(
-          capnp::MallocMessageBuilder& message_builder)
+          capnp::MessageBuilder& message_builder)
         {
           return message_builder
                  .getRoot<CollabVmServerMessage>().getMessage().
@@ -2578,7 +2836,7 @@ namespace CollabVm::Server
         }
 
         static capnp::List<CollabVmServerMessage::AdminVmInfo>::Builder InitList(
-          capnp::MallocMessageBuilder& message_builder, unsigned size)
+          capnp::MessageBuilder& message_builder, unsigned size)
         {
           return message_builder
                  .initRoot<CollabVmServerMessage>().initMessage().

@@ -1,10 +1,12 @@
 #pragma once
+#include <chrono>
 #include <openssl/rand.h>
 #include <gsl/span>
 #include <memory>
 #define MODERN_SQLITE_STD_OPTIONAL_SUPPORT
 #include <sqlite_modern_cpp.h>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #undef CONST
@@ -252,8 +254,38 @@ static Timestamp GetCurrentTimestamp();
   void SaveServerSettings(
       const capnp::List<ServerSetting>::Reader settings_list);
 
+  void SetRecordingStartTime(
+      const std::uint32_t vm_id,
+      const std::string_view file_path,
+      const std::chrono::time_point<std::chrono::system_clock> time)
+  {
+    SetRecordingStartStopTime(vm_id, file_path, time, true);
+  }
+
+  void SetRecordingStopTime(
+      const std::uint32_t vm_id,
+      const std::string_view file_path,
+      const std::chrono::time_point<std::chrono::system_clock> time)
+  {
+    SetRecordingStartStopTime(vm_id, file_path, time, false);
+  }
+
+  std::tuple<std::string,
+            std::chrono::time_point<std::chrono::system_clock>,
+            std::chrono::time_point<std::chrono::system_clock>>
+    GetRecordingFilePath(
+      const std::uint32_t vm_id,
+      const std::chrono::time_point<std::chrono::system_clock> start_time,
+      const std::chrono::time_point<std::chrono::system_clock> stop_time);
+
  private:
   void CreateTestVm();
+
+  void SetRecordingStartStopTime(
+      const std::uint32_t vm_id,
+      const std::string_view file_path,
+      const std::chrono::time_point<std::chrono::system_clock> time,
+      bool start_time);
 
   template<typename TReader>
   static std::vector<std::byte> CreateBlob(const TReader server_setting)

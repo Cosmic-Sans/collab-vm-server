@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <chrono>
 #include <iostream>
 
 #ifdef WIN32
@@ -57,6 +56,13 @@ Database::Database() : db_("collab-vm.db") {
     "  Setting BLOB NOT NULL,"
     "  PRIMARY KEY (IDs_VmId,"
     "               IDs_SettingID))";
+  db_ <<
+    "CREATE TABLE IF NOT EXISTS Recordings ("
+    "  VmId INTEGER NOT NULL,"
+    "  StartTime INTEGER,"
+    "  StopTime INTEGER,"
+    "  FilePath TEXT NOT NULL UNIQUE,"
+    "  PRIMARY KEY (VmId, StartTime))";
 
   if (created_new) {
     std::cout << "A new database has been created" << std::endl;
@@ -426,7 +432,7 @@ void Database::CreateUser(User& user)
 Database::Timestamp Database::GetCurrentTimestamp()
 {
   return std::chrono::duration_cast<std::chrono::seconds>(
-      std::chrono::steady_clock::now().time_since_epoch())
+      std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
 
@@ -616,6 +622,58 @@ std::pair<bool, std::string> Database::ValidateInvite(const gsl::span<const std:
     return {false, {}};
   }
   return {true, username};
+}
+
+void Database::SetRecordingStartStopTime(
+    const std::uint32_t vm_id,
+    const std::string_view file_path,
+    const std::chrono::time_point<std::chrono::system_clock> time,
+    bool start_time) {
+  const auto column_name = start_time ? "StartTime" : "StopTime";
+  db_ << std::string(
+    "INSERT INTO Recordings (VmId, FilePath, ") + column_name + ") VALUES (?1, ?2, ?3)"
+    "  ON CONFLICT(FilePath) DO UPDATE SET " + column_name + " = ?3"
+    << vm_id
+    << file_path.data()
+    << std::chrono::duration_cast<std::chrono::milliseconds>(
+         time.time_since_epoch()).count();
+}
+
+std::tuple<std::string,
+          std::chrono::time_point<std::chrono::system_clock>,
+          std::chrono::time_point<std::chrono::system_clock>>
+  Database::GetRecordingFilePath(
+    const std::uint32_t vm_id,
+    const std::chrono::time_point<std::chrono::system_clock> start_time,
+    const std::chrono::time_point<std::chrono::system_clock> stop_time)
+{
+  std::string file_path;
+  std::uint64_t file_start_time = 0;
+  std::uint64_t file_stop_time = 0;
+  try {
+    db_ <<
+      "SELECT FilePath, StartTime, StopTime FROM Recordings"
+      "  WHERE VmId = ? AND StartTime >= ? AND StartTime < ?"
+      "  ORDER BY StartTime ASC"
+      "  LIMIT 1"
+      << vm_id
+      << std::chrono::duration_cast<std::chrono::milliseconds>(
+        start_time.time_since_epoch()).count()
+      << std::chrono::duration_cast<std::chrono::milliseconds>(
+        stop_time.time_since_epoch()).count()
+      >> std::tie(file_path, file_start_time, file_stop_time);
+  } catch (const sqlite::sqlite_exception&) {
+  }
+  return { file_path,
+           file_start_time
+           ? std::chrono::time_point<std::chrono::system_clock>(
+               std::chrono::milliseconds(file_start_time))
+           : std::chrono::time_point<std::chrono::system_clock>(),
+           file_stop_time
+           ? std::chrono::time_point<std::chrono::system_clock>(
+               std::chrono::milliseconds(file_stop_time))
+           : std::chrono::time_point<std::chrono::system_clock>()
+         };
 }
 
 }  // namespace CollabVm::Server

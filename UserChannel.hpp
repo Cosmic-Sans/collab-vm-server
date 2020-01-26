@@ -32,6 +32,7 @@ struct UserChannel
 
   template<typename TCallback>
   void ForEachUser(TCallback&& callback) {
+    OnForEachUsers(callback);
     std::for_each(
       users_.begin(),
       users_.end(),
@@ -39,6 +40,17 @@ struct UserChannel
       (auto& user) mutable {
         callback(user.second, *user.first);
       });
+  }
+
+  template<typename TCallback>
+  void OnForEachUsers(TCallback& callback) {
+    if constexpr (!std::is_null_pointer_v<TBase>) {
+      if constexpr (!std::is_same_v<
+                        decltype(&UserChannel::OnForEachUsers<TCallback>),
+                        decltype(&TBase::template OnForEachUsers<TCallback>)>) {
+        static_cast<TBase&>(*this).OnForEachUsers(callback);
+      }
+    }
   }
 
   void AddUser(const TUserData& user_data, std::shared_ptr<TClient> user)
@@ -73,7 +85,7 @@ struct UserChannel
 
     ForEachUser([excluded_user = user.get(), user_message=std::move(user_message),
                  admin_user_message=std::move(admin_user_message)]
-      (const auto& user_data, auto& user)
+      (const auto& user_data, TClient& user)
       {
         if (&user == excluded_user) {
           return;
@@ -183,7 +195,7 @@ private:
     user_list.setChannel(GetId());
     auto users = user_list.initUsers(users_.size());
     ForEachUser(
-      [this, users_it = users.begin()](auto& user_data, auto&) mutable
+      [this, users_it = users.begin()](auto& user_data, TClient&) mutable
       {
         AddUserToList(user_data, *users_it++);
       });

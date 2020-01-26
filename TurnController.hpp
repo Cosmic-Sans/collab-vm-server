@@ -37,18 +37,27 @@ class TurnController {
       turn_queue_,
       std::chrono::duration_cast<std::chrono::milliseconds>(time_remaining));
   }
-
-  std::chrono::milliseconds GetTimeRemaining() const
-  {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-      turn_timer_.expiry() - std::chrono::steady_clock::now());
-  }
 public:
   template<typename TExecutionContext>
   explicit TurnController(TExecutionContext& context) :
     turn_timer_(context),
     turn_time_(0)
   {
+  }
+
+  [[nodiscard]]
+  std::chrono::milliseconds GetTimeRemaining() const
+  {
+    return turn_queue_.empty()
+        ? std::chrono::milliseconds(0)
+        : std::chrono::duration_cast<std::chrono::milliseconds>(
+            turn_timer_.expiry() - std::chrono::steady_clock::now());
+  }
+
+  [[nodiscard]]
+  const std::deque<TUserPtr>& GetTurnQueue() const
+  {
+    return turn_queue_;
   }
 
   class UserTurnData

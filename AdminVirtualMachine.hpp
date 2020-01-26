@@ -1,3 +1,13 @@
+#pragma once
+
+#include <chrono>
+#include "Database/Database.h"
+#include "CollabVm.capnp.h"
+#include "IPData.hpp"
+#include "TurnController.hpp"
+#include "VoteController.hpp"
+#include "RecordingController.hpp"
+
 namespace CollabVm::Server
 {
 template<typename TServer, typename TClient>
@@ -80,14 +90,41 @@ struct AdminVirtualMachine
       });
   }
 
+  void OnGuacamoleInstructions(
+      std::shared_ptr<std::vector<std::shared_ptr<SharedSocketMessage>>> instructions) {
+    state_.dispatch([instructions = std::move(instructions)](auto& state) mutable {
+      state.ForEachUser(
+        [instructions = std::move(instructions)]
+        (const auto&, auto& user)
+        {
+          user.QueueMessageBatch([instructions](auto enqueue)
+          {
+            for (auto& instruction : *instructions)
+            {
+              enqueue(instruction);
+            }
+          });
+        });
+      });
+  }
+
+  template<typename TCallback>
+  void SetRecordingSettings(TCallback&& callback) {
+    state_.dispatch([callback = std::forward<TCallback>(callback)](auto& state) {
+      state.SetRecordingSettings(std::move(callback));
+      });
+  }
+
   struct VmState final
     : TurnController<std::shared_ptr<TClient>>,
       VoteController<VmState>,
-      UserChannel<TClient, typename TClient::UserData, VmState>
+      UserChannel<TClient, typename TClient::UserData, VmState>,
+      RecordingController<VmState>
   {
     using VmTurnController = TurnController<std::shared_ptr<TClient>>;
     using VmVoteController = VoteController<VmState>;
     using VmUserChannel = UserChannel<TClient, typename TClient::UserData, VmState>;
+    using VmRecording = RecordingController<VmState>;
 
     VmState(
       boost::asio::io_context::strand& strand,
@@ -99,6 +136,7 @@ struct AdminVirtualMachine
       : VmTurnController(strand),
         VmVoteController(strand),
         VmUserChannel(id),
+        VmRecording(strand, id),
         connect_delay_timer_(strand),
         message_builder_(std::make_unique<capnp::MallocMessageBuilder>()),
         settings_(GetInitialSettings(initial_settings)),
@@ -110,6 +148,17 @@ struct AdminVirtualMachine
       VmTurnController::SetTurnTime(
         std::chrono::seconds(
           GetSetting(VmSetting::Setting::TURN_TIME).getTurnTime()));
+    }
+
+    template<typename TCallback>
+    void SetRecordingSettings(TCallback&& callback) {
+      VmRecording::SetRecordingSettings(callback());
+      if (active_
+          && GetSetting(VmSetting::Setting::RECORDINGS_ENABLED)
+               .getRecordingsEnabled()
+          && !VmRecording::IsRecording()) {
+        VmRecording::Start();
+      }
     }
 
     capnp::List<VmSetting>::Builder GetInitialSettings(
@@ -203,30 +252,62 @@ struct AdminVirtualMachine
     }
 
     void OnAddUser(const std::shared_ptr<TClient>& user) {
-      user->QueueMessageBatch(
-        [&guacamole_client=guacamole_client_,
-         description_message = GetVmDescriptionMessage(),
-         vote_status_message = GetVoteStatus()]
-        (auto queue_message) mutable
+      user->QueueMessageBatch([this](auto&& message) {
+          WriteChannelJoinMessages(std::forward<decltype(message)>(message));
+        });
+    }
+
+    // A fake user that will be added to the users list to
+    // capture messages and save them to the recording
+    struct RecordingUser {
+      RecordingUser(VmRecording& recording)
+        : recording_(recording) {
+        user_data.user_type = CollabVmServerMessage::UserType::ADMIN;
+      }
+      template<typename TMessage>
+      void QueueMessage(TMessage&& socket_message)
+      {
+        recording_.WriteMessage(*socket_message);
+      }
+      template<typename TCallback>
+      void QueueMessageBatch(TCallback&& callback)
+      {
+        callback([this](auto&& socket_message) {
+          QueueMessage(std::forward<decltype(socket_message)>(socket_message));
+        });
+      }
+      VmRecording& recording_;
+      typename TClient::UserData user_data;
+    } recording_user_ = {*this};
+
+    template<typename TCallback>
+    void OnForEachUsers(TCallback& callback) {
+      if constexpr (std::is_invocable_v<
+          TCallback, typename TClient::UserData&, RecordingUser&>) {
+        callback(recording_user_.user_data, recording_user_);
+      }
+    }
+
+    template<typename TWriteMessage>
+    void WriteChannelJoinMessages(TWriteMessage&& write_message) {
+      write_message(GetVmDescriptionMessage());
+      write_message(GetTurnQueue());
+      write_message(GetVoteStatus());
+      guacamole_client_.AddUser(
+        [write_message = std::move(write_message)]
+        (capnp::MallocMessageBuilder&& message_builder)
         {
-          queue_message(std::move(description_message));
-          queue_message(std::move(vote_status_message));
-          guacamole_client.AddUser(
-            [queue_message=std::move(queue_message)]
-            (capnp::MallocMessageBuilder&& message_builder)
-            {
-              // TODO: Avoid copying
-              auto guac_instr =
-                message_builder.getRoot<Guacamole::GuacServerInstruction>();
-              auto socket_message = SocketMessage::CreateShared();
-              socket_message->GetMessageBuilder()
-                            .initRoot<CollabVmServerMessage>()
-                            .initMessage()
-                            .setGuacInstr(guac_instr);
-              socket_message->CreateFrame();
-              queue_message(std::move(socket_message));
-            });
-      });
+          // TODO: Avoid copying
+          auto guac_instr =
+            message_builder.getRoot<Guacamole::GuacServerInstruction>();
+          auto socket_message = SocketMessage::CreateShared();
+          socket_message->GetMessageBuilder()
+                        .initRoot<CollabVmServerMessage>()
+                        .initMessage()
+                        .setGuacInstr(guac_instr);
+          socket_message->CreateFrame();
+          write_message(std::move(socket_message));
+        });
     }
 
     void OnRemoveUser(const std::shared_ptr<TClient>& user) {
@@ -264,6 +345,12 @@ struct AdminVirtualMachine
     void BroadcastTurnQueue(
         const std::deque<std::shared_ptr<TClient>>& users_queue,
         std::chrono::milliseconds time_remaining) {
+      VmUserChannel::BroadcastMessage(GetTurnQueue());
+    }
+
+    [[nodiscard]]
+    std::shared_ptr<SocketMessage> GetTurnQueue() const {
+      const auto& users_queue = VmTurnController::GetTurnQueue();
       auto message = SocketMessage::CreateShared();
       auto vm_turn_info =
         message->GetMessageBuilder().initRoot<CollabVmServerMessage>()
@@ -274,17 +361,17 @@ struct AdminVirtualMachine
           ? CollabVmServerMessage::TurnState::PAUSED
           : CollabVmServerMessage::TurnState::ENABLED
         : CollabVmServerMessage::TurnState::DISABLED);
-      vm_turn_info.setTimeRemaining(time_remaining.count());
+      vm_turn_info.setTimeRemaining(VmTurnController::GetTimeRemaining().count());
       auto users_list = vm_turn_info.initUsers(users_queue.size());
       auto i = 0u;
       const auto& channel_users = VmUserChannel::GetUsers();
-      for (auto& user_in_queue : users_queue) {
+      for (const auto& user_in_queue : users_queue) {
         if (const auto channel_user = channel_users.find(user_in_queue);
             channel_user != channel_users.end()) {
           users_list.set(i++, channel_user->second.username);
         }
       }
-      VmUserChannel::BroadcastMessage(std::move(message));
+      return message;
     }
 
     void ApplySettings(const capnp::List<VmSetting>::Reader settings,
@@ -327,12 +414,24 @@ struct AdminVirtualMachine
              .getSetting().getDisallowGuests())
       {
         VmUserChannel::ForEachUser(
-          [](auto& user_data, auto& socket)
+          [](auto& user_data, TClient& socket)
           {
             // TODO: Send a channel disconnect message
             // instead of closing the socket
             socket.Close();
           });
+      }
+      const auto recordings_enabled =
+        settings[VmSetting::Setting::RECORDINGS_ENABLED]
+        .getSetting().getRecordingsEnabled();
+      if (active_ && recordings_enabled
+          != previous_settings[VmSetting::Setting::RECORDINGS_ENABLED]
+               .getSetting().getRecordingsEnabled()) {
+        if (recordings_enabled) {
+          VmRecording::Start();
+        } else {
+          VmRecording::Stop();
+        }
       }
       SetGuacamoleArguments();
     }
@@ -474,6 +573,38 @@ struct AdminVirtualMachine
         GetSetting(VmSetting::Setting::VOTE_COOLDOWN_TIME).getVoteCooldownTime());
     }
 
+    void OnRecordingStarted(std::chrono::time_point<std::chrono::system_clock> time)
+    {
+      admin_vm_.server_.GetDatabase().SetRecordingStartTime(
+        VmUserChannel::GetId(), VmRecording::GetFilename(), time);
+    }
+
+    void OnRecordingStopped(std::chrono::time_point<std::chrono::system_clock> time)
+    {
+      admin_vm_.server_.GetDatabase().SetRecordingStopTime(
+        VmUserChannel::GetId(), VmRecording::GetFilename(), time);
+    }
+
+    void OnKeyframeInRecording()
+    {
+      VmRecording::WriteMessage(
+        VmUserChannel::CreateAdminUserListMessage()->GetMessageBuilder());
+
+      auto message_builder = capnp::MallocMessageBuilder();
+      auto connect_result =
+        message_builder.initRoot<CollabVmServerMessage>()
+        .initMessage()
+        .initConnectResponse()
+        .initResult();
+      auto connectSuccess = connect_result.initSuccess();
+      VmUserChannel::GetChatRoom().GetChatHistory(connectSuccess);
+      VmRecording::WriteMessage(message_builder);
+
+      WriteChannelJoinMessages([this](auto&& message) {
+          VmRecording::WriteMessage(*message);
+        });
+    }
+
     bool active_ = false;
     bool connected_ = false;
     boost::asio::steady_timer connect_delay_timer_;
@@ -500,6 +631,8 @@ struct AdminVirtualMachine
           return;
       }
 
+      static_cast<RecordingController<VmState>&>(state).Start();
+
       if (const auto start_command =
             state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
           start_command.size()) {
@@ -518,6 +651,8 @@ struct AdminVirtualMachine
   {
     state_.dispatch([this](auto& state)
     {
+      static_cast<RecordingController<VmState>&>(state).Stop();
+
       if (!state.active_) {
           return;
       }
@@ -720,18 +855,19 @@ private:
                         .setGuacInstr(guac_instr);
           socket_message->CreateFrame();
         });
-      const auto& users = state.GetUsers();
-      for (auto& user : users)
-      {
-        user.first->QueueMessageBatch(
-          [&messages](auto queue_message)
-          {
-            for (auto& message : messages)
+      state.ForEachUser(
+        [&messages]
+        (const auto&, auto& user)
+        {
+          user.QueueMessageBatch(
+            [&messages](auto queue_message)
             {
-              queue_message(message);
-            }
-          });
-      }
+              for (auto& message : messages)
+              {
+                queue_message(message);
+              }
+            });
+        });
     });
   }
 
