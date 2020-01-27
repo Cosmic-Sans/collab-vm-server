@@ -875,20 +875,25 @@ private:
   {
     state_.dispatch([this](auto& state)
       {
-        state.connected_ = false;
-        UpdateVmInfo();
+        if (state.connected_ || !state.active_)
+        {
+          state.connected_ = false;
+          UpdateVmInfo();
+        }
         if (!state.active_)
         {
           return;
         }
         state.connect_delay_timer_.expires_after(std::chrono::seconds(1));
         state.connect_delay_timer_.async_wait(
-          state_.wrap([](auto& state, auto error_code)
+          state_.wrap([this](auto& state, auto error_code)
           {
-            if (!error_code && state.active_)
+            if (error_code || !state.active_)
             {
-              state.StartGuacamoleClient();
+              UpdateVmInfo();
+              return;
             }
+            state.StartGuacamoleClient();
           }));
       });
   }

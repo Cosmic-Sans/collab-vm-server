@@ -2601,8 +2601,7 @@ namespace CollabVm::Server
                     reinterpret_cast<kj::byte*>(thumbnail_bytes.data()),
                     thumbnail_bytes.size()));
                 }
-                vm->has_vm_info = vm_info_producer.vm_info != nullptr;
-                if (vm->has_vm_info)
+                if (vm_info_producer.vm_info != nullptr)
                 {
                   pending_vm_info_updates_++;
                 }
@@ -2620,32 +2619,26 @@ namespace CollabVm::Server
                 orphanage.newOrphan<CollabVmServerMessage::VmInfo>();
                 */
                 admin_vm_info_list_.Reset(admin_virtual_machines_.size());
-                //using GetList = typename decltype(admin_vm_info_list_)::List::GetList;
-                auto admin_vm_info_list =
-                  decltype(admin_vm_info_list_)::List::GetList(
-                    admin_vm_info_list_.GetMessageBuilder());
                 vm_info_list_.Reset(pending_vm_info_updates_);
-                auto vm_info_list =
-                  decltype(vm_info_list_)::List::GetList(
-                    vm_info_list_.GetMessageBuilder());
                 auto admin_vm_info_list_index = 0u;
                 auto vm_info_list_index = 0u;
                 for (auto& [id, admin_vm] : admin_virtual_machines_)
                 {
-                  if (!admin_vm->HasPendingAdminVmInfo())
+                  if (admin_vm->HasPendingAdminVmInfo())
                   {
-                    continue;
+                    admin_vm_info_list_.GetList().setWithCaveats(
+                      admin_vm_info_list_index++,
+                      admin_vm->GetPendingAdminVmInfo());
                   }
-                  admin_vm_info_list.setWithCaveats(
-                    admin_vm_info_list_index++,
-                    admin_vm->GetPendingAdminVmInfo());
-                  if (admin_vm->HasPendingVmInfo())
+                  admin_vm->has_vm_info = admin_vm->HasPendingVmInfo();
+                  if (admin_vm->has_vm_info)
                   {
-                    vm_info_list.setWithCaveats(
+                    vm_info_list_.GetList().setWithCaveats(
                       vm_info_list_index++, admin_vm->GetPendingVmInfo());
                   }
                   admin_vm->FreeVmInfo();
                 }
+                assert(vm_info_list_index == vm_info_list_.GetList().size());
                 std::for_each(vm_list_viewers_.begin(), vm_list_viewers_.end(),
                   [vm_list_message=vm_info_list_.GetMessage(),
                    thumbnails=GetThumbnailMessages()](auto& viewer)
@@ -2741,7 +2734,9 @@ namespace CollabVm::Server
         {
           auto message = SocketMessage::CreateShared();
           auto vm_list = TFunction::InitList(message->GetMessageBuilder(), list_.size() + 1);
-          std::copy(list_.begin(), list_.end(), vm_list.begin());
+          for (capnp::uint i = 0; i < list_.size(); i++) {
+            vm_list.setWithCaveats(i, list_[i]);
+          }
           list_ = vm_list;
           message_ = std::move(message);
           return vm_list[vm_list.size() - 1];
@@ -2752,7 +2747,9 @@ namespace CollabVm::Server
         {
           auto message = SocketMessage::CreateShared();
           auto vm_list = TFunction::InitList(message->GetMessageBuilder(), list_.size() + 1);
-          std::copy(list_.begin(), list_.end(), vm_list.begin());
+          for (capnp::uint i = 0; i < list_.size(); i++) {
+            vm_list.setWithCaveats(i, list_[i]);
+          }
           list_ = vm_list;
           message_ = std::move(message);
           vm_list.setWithCaveats(vm_list.size() - 1, new_element);
@@ -2764,10 +2761,13 @@ namespace CollabVm::Server
           auto message = SocketMessage::CreateShared();
           auto vm_list =
             TFunction::InitList(message->GetMessageBuilder(), list_.size() - 1);
-          const auto copy_end =
-            std::remove_copy_if(list_.begin(), list_.end(),
-                                vm_list.begin(), std::move(predicate));
-          assert(copy_end == vm_list.end());
+          capnp::uint j = 0;
+          for (capnp::uint i = 0; i < list_.size(); i++) {
+            if (!predicate(list_[i])) {
+              vm_list.setWithCaveats(j++, list_[i]);
+            }
+          }
+          assert(j == vm_list.size());
           list_ = vm_list;
           message_ = std::move(message);
         }
@@ -2779,7 +2779,7 @@ namespace CollabVm::Server
           const auto size = list_.size();
           auto new_vm_list =
             TFunction::InitList(message->GetMessageBuilder(), size);
-          for (auto i = 0u; i < size; i++)
+          for (capnp::uint i = 0; i < size; i++)
           {
             new_vm_list.setWithCaveats(
               i, predicate(list_[i]) ? new_element : list_[i]);
@@ -2788,11 +2788,10 @@ namespace CollabVm::Server
           message_ = std::move(message);
         }
 
-        void Reset(unsigned capacity)
+        void Reset(capnp::uint capacity)
         {
           message_ = SocketMessage::CreateShared();
-          list_ =
-            TFunction::InitList(message_->GetMessageBuilder(), capacity);
+          list_ = TFunction::InitList(message_->GetMessageBuilder(), capacity);
         }
 
         capnp::MessageBuilder& GetMessageBuilder() const
@@ -2803,6 +2802,11 @@ namespace CollabVm::Server
         std::shared_ptr<SharedSocketMessage> GetMessage() const
         {
           return message_;
+        }
+
+        auto GetList()
+        {
+          return list_;
         }
       private:
         std::shared_ptr<SharedSocketMessage> message_;
@@ -2823,11 +2827,11 @@ namespace CollabVm::Server
         }
 
         static capnp::List<CollabVmServerMessage::VmInfo>::Builder InitList(
-          capnp::MessageBuilder& message_builder, unsigned size)
+          capnp::MessageBuilder& message_builder, capnp::uint size)
         {
           return message_builder
-                 .initRoot<CollabVmServerMessage>().initMessage().
-                 initVmListResponse(size);
+                 .initRoot<CollabVmServerMessage>().initMessage()
+                 .initVmListResponse(size);
         }
       };
 
