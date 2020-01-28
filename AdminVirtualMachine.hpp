@@ -685,9 +685,6 @@ struct AdminVirtualMachine
           restart_command.size()) {
         server_.ExecuteCommandAsync(restart_command.cStr());
       }
-
-      state.active_ = true;
-      state.guacamole_client_.Stop();
     });
   }
 
