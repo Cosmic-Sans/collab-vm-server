@@ -108,6 +108,7 @@ public:
           else
           {
             vote_state_ = VoteState::kIdle;
+            static_cast<TBase&>(*this).OnVoteIdle();
           }
 
           const auto vote_passed = yes_vote_count_ >= no_vote_count_;
