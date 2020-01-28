@@ -631,7 +631,10 @@ struct AdminVirtualMachine
           return;
       }
 
-      static_cast<RecordingController<VmState>&>(state).Start();
+      if (state.GetSetting(VmSetting::Setting::RECORDINGS_ENABLED)
+              .getRecordingsEnabled()) {
+        static_cast<RecordingController<VmState>&>(state).Start();
+      }
 
       if (const auto start_command =
             state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
