@@ -893,6 +893,13 @@ private:
               UpdateVmInfo();
               return;
             }
+            if (const auto start_command =
+                  state.GetSetting(VmSetting::Setting::START_COMMAND).getStartCommand();
+                start_command.size()
+                && state.GetSetting(VmSetting::Setting::RUN_START_COMMAND_AFTER_DISCONNECT)
+                        .getRunStartCommandAfterDisconnect()) {
+              server_.ExecuteCommandAsync(start_command.cStr());
+            }
             state.StartGuacamoleClient();
           }));
       });

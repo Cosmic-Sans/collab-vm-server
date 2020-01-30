@@ -2156,16 +2156,12 @@ namespace CollabVm::Server
       TServer::Stop();
     }
 
-    static void ExecuteCommandAsync(const std::string_view command) {
+    static void ExecuteCommandAsync(std::string command) {
       // system() is used for simplicity but it is actually synchronous,
-      // so the command is manipulated to make the shell return immediately
-      const auto async_shell_command =
-#ifdef _WIN32
-        std::string("start ") + command.data();
-#else
-        command.data() + std::string(" &");
-#endif
-      system(async_shell_command.c_str());
+      // so it is called in a new thread
+      std::thread([command = std::move(command)] {
+          std::system(command.c_str());
+        }).detach();
     }
 
     Database& GetDatabase() {
