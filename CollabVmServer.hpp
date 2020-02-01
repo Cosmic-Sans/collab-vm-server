@@ -1645,6 +1645,10 @@ namespace CollabVm::Server
           {
             callback([&send_queue](auto&& socket_message)
             {
+              if (!socket_message) {
+                // FIXME: This shouldn't happen
+                return;
+              }
               socket_message->CreateFrame();
               send_queue.push(std::forward<decltype(socket_message)>(socket_message));
             });
