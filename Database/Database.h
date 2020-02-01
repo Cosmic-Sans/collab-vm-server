@@ -192,22 +192,63 @@ static Timestamp GetCurrentTimestamp();
   void CreateVm(const std::uint32_t vm_id,
     const capnp::List<VmSetting>::Reader settings_list);
 
-  template <typename TCallback>
-  void ReadVmSettings(TCallback callback) {
+  template<typename TCallback>
+  void ReadVmSettings(TCallback&& callback) {
+    auto fields = capnp::Schema::from<VmSetting::Setting>().getUnionFields();
+    const auto fields_count = fields.size();
+    auto expected_setting_id = 0u;
+    auto message_builder = capnp::MallocMessageBuilder();
+    auto previous_vm_id = std::optional<std::uint32_t>();
+    const auto generateNewSettings = [&](std::uint32_t vm_id) {
+      // Set missing settings to their defaults
+      for (; expected_setting_id < fields_count; expected_setting_id++) {
+        auto vm_setting = message_builder.initRoot<VmSetting>().initSetting();
+        capnp::DynamicStruct::Builder dynamic_vm_setting = vm_setting;
+        const auto field = fields[expected_setting_id];
+        dynamic_vm_setting.clear(field);
+        db_ <<
+          "INSERT INTO VmConfig (IDs_VmId, IDs_SettingID, Setting) VALUES (?, ?, ?)"
+          << vm_id << expected_setting_id << CreateBlob(vm_setting.asReader());
+        callback(vm_id, expected_setting_id, message_builder.getRoot<VmSetting>());
+      }
+    };
     db_ <<
       "SELECT VmConfig.IDs_VmId, VmConfig.IDs_SettingID, VmConfig.Setting"
       "  FROM VmConfig"
       "  ORDER BY VmConfig.IDs_VmId, VmConfig.IDs_SettingID"
-      >> [callback = std::forward<TCallback>(callback)]
+      >> [&, callback = std::forward<TCallback>(callback)]
          (std::uint32_t vm_id,
           std::uint32_t setting_id,
           const std::vector<std::byte>& setting) mutable
           {
-            auto db_setting =
-              capnp::readMessageUnchecked<VmSetting>(
+            if (previous_vm_id.has_value() && previous_vm_id != vm_id) {
+              generateNewSettings(vm_id);
+              expected_setting_id = 0;
+            }
+            previous_vm_id = vm_id;
+            const auto field = fields[setting_id];
+            auto db_setting = capnp::readMessageUnchecked<VmSetting>(
                 reinterpret_cast<const capnp::word*>(setting.data()));
+            if (db_setting.getSetting().which() != setting_id) {
+              // The Setting union has the wrong field set
+              std::cout << "Warning: the VM setting '"
+                        << field.getProto().getName().cStr() << "' was invalid"
+                        << std::endl;
+              auto vm_setting = message_builder.initRoot<VmSetting>().initSetting();
+              capnp::DynamicStruct::Builder dynamic_vm_setting = vm_setting;
+              dynamic_vm_setting.clear(field);
+              db_ <<
+                "INSERT INTO VmConfig (IDs_VmId, IDs_SettingID, Setting) VALUES (?, ?, ?)"
+                << vm_id << setting_id << CreateBlob(vm_setting.asReader());
+              expected_setting_id++;
+              return;
+            }
             callback(vm_id, setting_id, db_setting);
+            expected_setting_id++;
           };
+    if (previous_vm_id.has_value()) {
+      generateNewSettings(*previous_vm_id);
+    }
   }
 
   void UpdateVmSettings(const std::uint32_t vm_id,
