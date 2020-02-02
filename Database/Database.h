@@ -222,7 +222,7 @@ static Timestamp GetCurrentTimestamp();
           const std::vector<std::byte>& setting) mutable
           {
             if (previous_vm_id.has_value() && previous_vm_id != vm_id) {
-              generateNewSettings(vm_id);
+              generateNewSettings(*previous_vm_id);
               expected_setting_id = 0;
             }
             previous_vm_id = vm_id;
