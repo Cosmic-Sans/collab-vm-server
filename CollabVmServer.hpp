@@ -1949,7 +1949,6 @@ namespace CollabVm::Server
                   return a.getTimestamp() > b.getTimestamp();
                 });
               if (keyframe != keyframes_.crend()) {
-                const auto timestamp_index = keyframe.base() - keyframes_.begin(); //////
                 if (current_timestamp < keyframe->getTimestamp()
                     || timestamp < current_timestamp) {
                   SeekToKeyframe(keyframe.base());
@@ -1958,7 +1957,7 @@ namespace CollabVm::Server
               return true;
             }
             [[nodiscard]]
-            std::uint64_t GetNextFileTimestamp() {
+            std::uint64_t GetNextFileTimestamp() const {
               return std::max(file_header.getStartTime() + 1, file_header.getStopTime());
             }
           private:

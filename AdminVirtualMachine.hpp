@@ -798,17 +798,19 @@ struct AdminVirtualMachine
     });
   }
 
-  template<typename TCallback>
-  void ReadInstruction(std::shared_ptr<TClient> user, TCallback&& callback)
+  template<typename TGetInstruction>
+  void ReadInstruction(std::shared_ptr<TClient> user, TGetInstruction&& getInstruction)
   {
     state_.dispatch(
       [user = std::move(user),
-       callback=std::forward<TCallback>(callback)](auto& state)
+       getInstruction=std::forward<TGetInstruction>(getInstruction)](auto& state)
       {
         if (state.connected_
             && (state.HasCurrentTurn(user) && !state.IsPaused()
                 || state.IsAdmin(user))) {
-          state.guacamole_client_.ReadInstruction(callback());
+          state.guacamole_client_.ReadInstruction(getInstruction());
+          static_cast<RecordingController<VmState>&>(state)
+            .WriteMessage(getInstruction());
         }
       });
   }

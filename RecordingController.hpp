@@ -11,6 +11,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include "CollabVm.capnp.h"
 #include "SocketMessage.hpp"
 
@@ -25,9 +26,15 @@ struct RecordingController {
   }
 
   void SetRecordingSettings(ServerSetting::Recordings::Reader settings) {
+    const auto keyframe_interval = std::chrono::seconds(settings.getKeyframeInterval());
+    const auto create_keyframe =
+      keyframe_interval_ != keyframe_interval
+      || settings_.getCaptureDisplay() != settings.getCaptureDisplay()
+      || settings_.getCaptureAudio() != settings.getCaptureAudio();
     settings_message_builder_.setRoot(settings);
+    settings_ = settings_message_builder_.getRoot<ServerSetting::Recordings>();
     file_duration_ = std::chrono::minutes(settings.getFileDuration());
-    keyframe_interval_ = std::chrono::seconds(settings.getKeyframeInterval());
+    keyframe_interval_ = keyframe_interval;
 
     if (!IsRecording()) {
       return;
@@ -38,7 +45,9 @@ struct RecordingController {
       Start();
       return;
     }
-    UpdateKeyframeTimer();
+    if (create_keyframe) {
+      StartKeyframeTimer();
+    }
   }
 
   void Start() {
@@ -81,10 +90,9 @@ struct RecordingController {
         Start();
       }
     });
-    UpdateKeyframeTimer();
     WriteFileHeader();
     static_cast<TCallbacks&>(*this).OnRecordingStarted(start_time);
-    static_cast<TCallbacks&>(*this).OnKeyframeInRecording();
+    StartKeyframeTimer();
   }
 
   std::chrono::time_point<std::chrono::system_clock> Stop() {
@@ -118,7 +126,7 @@ struct RecordingController {
   void WriteMessage(SocketMessage& message) {
     auto collab_vm_message = message.GetRoot<CollabVmServerMessage::Message>();
     if (!IsRecording()
-        || !ShouldMessageRecorded(collab_vm_message)) {
+        || !ShouldRecordMessage(collab_vm_message)) {
       return;
     }
     IncludeTimestamp(collab_vm_message);
@@ -132,7 +140,7 @@ struct RecordingController {
   void WriteMessage(capnp::MessageBuilder& message_builder) {
     auto message = message_builder.getRoot<CollabVmServerMessage::Message>();
     if (!IsRecording()
-        || !ShouldMessageRecorded(message)) {
+        || !ShouldRecordMessage(message)) {
       return;
     }
     auto output_stream = kj::std::StdOutputStream(file_stream_);
@@ -140,19 +148,66 @@ struct RecordingController {
     capnp::writeMessage(output_stream, message_builder);
   }
 
+
+  void WriteMessage(
+      Guacamole::GuacClientInstruction::Reader guacamole_instruction) {
+    if (!IsRecording() || !settings_.getCaptureInput()) {
+      return;
+    }
+    if (guacamole_instruction.which() == Guacamole::GuacClientInstruction::MOUSE) {
+      auto message_builder = capnp::MallocMessageBuilder();
+      auto server_mouse = message_builder
+        .initRoot<CollabVmServerMessage>()
+        .initMessage()
+        .initGuacInstr()
+        .initMouse();
+      auto client_mouse = guacamole_instruction.getMouse();
+      server_mouse.setX(client_mouse.getX());
+      server_mouse.setY(client_mouse.getY());
+      server_mouse.setButtonMask(client_mouse.getButtonMask());
+      server_mouse.setTimestamp(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count());
+      WriteMessage(message_builder);
+    } else if (guacamole_instruction.which() == Guacamole::GuacClientInstruction::KEY) {
+      auto message_builder = capnp::MallocMessageBuilder();
+      auto client_key = guacamole_instruction.getKey();
+      auto server_key = message_builder
+        .initRoot<CollabVmServerMessage>()
+        .initMessage()
+        .initGuacInstr()
+        .initKey();
+      server_key.setKeysym(client_key.getKeysym());
+      server_key.setPressed(client_key.getPressed());
+      server_key.setTimestamp(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count());
+      WriteMessage(message_builder);
+    }
+  }
+
 private:
   [[nodiscard]]
-  bool ShouldMessageRecorded(CollabVmServerMessage::Message::Reader message) {
+  bool ShouldRecordMessage(CollabVmServerMessage::Message::Reader message) {
     if (message.which() != CollabVmServerMessage::Message::GUAC_INSTR) {
       return true;
     }
-    switch (message.getGuacInstr().which()) {
+    auto guacamole_instruction = message.getGuacInstr();
+    switch (guacamole_instruction.which()) {
     case Guacamole::GuacServerInstruction::SYNC:
       return settings_.getCaptureDisplay()
           || settings_.getCaptureInput()
           || settings_.getCaptureAudio();
+    case Guacamole::GuacServerInstruction::BLOB:
+      return !ignored_streams_.count(guacamole_instruction.getBlob().getStream());
+    case Guacamole::GuacServerInstruction::END:
+      return !ignored_streams_.erase(guacamole_instruction.getEnd());
     case Guacamole::GuacServerInstruction::AUDIO:
-      return settings_.getCaptureAudio();
+      if (settings_.getCaptureAudio()) {
+        return true;
+      }
+      ignored_streams_.insert(guacamole_instruction.getAudio().getStream());
+      return false;
     case Guacamole::GuacServerInstruction::MOUSE:
     case Guacamole::GuacServerInstruction::KEY:
       return settings_.getCaptureInput();
@@ -187,15 +242,14 @@ private:
     }
   }
 
-  void UpdateKeyframeTimer() {
+  void StartKeyframeTimer() {
+    ignored_streams_.clear();
+    static_cast<TCallbacks&>(*this).OnKeyframeInRecording();
+
     if (!keyframe_interval_.count()) {
       keyframe_timer_.cancel();
       return;
     }
-    StartKeyframeTimer();
-  }
-
-  void StartKeyframeTimer() {
     keyframe_timer_.expires_after(keyframe_interval_);
     keyframe_timer_.async_wait([this](const auto error_code) {
       if (error_code) {
@@ -217,7 +271,6 @@ private:
       ++next_keyframe_offset_;
       file_header.setKeyframesCount(file_header.getKeyframesCount() + 1);
       WriteFileHeader();
-      static_cast<TCallbacks&>(*this).OnKeyframeInRecording();
       StartKeyframeTimer();
     });
   };
@@ -239,7 +292,7 @@ private:
     return buffer;
   }
 
-  std::uint32_t vm_id_;
+  const std::uint32_t vm_id_;
   std::ofstream file_stream_;
   capnp::MallocMessageBuilder file_header_;
   capnp::List<RecordingFileHeader::Keyframe>::Builder::Iterator next_keyframe_offset_;
@@ -248,9 +301,10 @@ private:
   std::chrono::minutes file_duration_ = std::chrono::minutes::zero();
   std::chrono::seconds keyframe_interval_ = std::chrono::seconds::zero();
   std::string filename_;
-  ServerSetting::Recordings::Reader settings_;
   capnp::MallocMessageBuilder settings_message_builder_;
+  ServerSetting::Recordings::Reader settings_ = settings_message_builder_.initRoot<ServerSetting::Recordings>();
   capnp::MallocMessageBuilder timestamp_message_builder;
+  std::unordered_set<std::int32_t> ignored_streams_;
   static constexpr std::string_view recordings_directory = "./recordings/";
 };
 }
