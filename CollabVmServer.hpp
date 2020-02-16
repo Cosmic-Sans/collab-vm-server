@@ -70,6 +70,10 @@ namespace CollabVm::Server
         bool IsAdmin() const {
           return user_type == CollabVmServerMessage::UserType::ADMIN;
         }
+
+        bool IsRegistered() const {
+          return user_type != CollabVmServerMessage::UserType::GUEST;
+        }
       };
 
       CollabVmSocket(boost::asio::io_context& io_context,

@@ -501,19 +501,28 @@ struct AdminVirtualMachine
       }
       const auto time_remaining = VmVoteController::GetTimeRemaining().count();
       if (!time_remaining) {
-        vote_status.setIdle();
+        vote_status.initIdle().setDisallowGuestVotes(
+         GetSetting(VmSetting::Setting::DISALLOW_GUEST_VOTES)
+            .getDisallowGuestVotes());
         return message;
       }
       auto vote_info = vote_status.initInProgress();
       vote_info.setTimeRemaining(time_remaining);
       vote_info.setYesVoteCount(VmVoteController::GetYesVoteCount());
       vote_info.setNoVoteCount(VmVoteController::GetNoVoteCount());
+      vote_info.initVoterEligibility().setDisallowGuestVotes(
+        GetSetting(VmSetting::Setting::DISALLOW_GUEST_VOTES)
+          .getDisallowGuestVotes());
       return message;
     }
 
     void Vote(std::shared_ptr<TClient>&& user, bool voted_yes) {
-      const auto user_vote = VmUserChannel::GetUserData(user);
-      if (!user_vote.has_value()) {
+      const auto user_data = VmUserChannel::GetUserData(user);
+      if (!user_data.has_value()) {
+        return;
+      }
+      if (GetSetting(VmSetting::Setting::DISALLOW_GUEST_VOTES).getDisallowGuestVotes()
+          && !user_data->get().IsRegistered()) {
         return;
       }
       const auto vote_counted =
