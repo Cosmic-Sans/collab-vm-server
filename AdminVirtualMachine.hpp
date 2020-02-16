@@ -90,6 +90,14 @@ struct AdminVirtualMachine
       });
   }
 
+  void CancelVote()
+  {
+    state_.dispatch([](auto& state)
+      {
+        state.StopVote();
+      });
+  }
+
   void OnGuacamoleInstructions(
       std::shared_ptr<std::vector<std::shared_ptr<SharedSocketMessage>>> instructions) {
     state_.dispatch([instructions = std::move(instructions)](auto& state) mutable {
@@ -538,6 +546,9 @@ struct AdminVirtualMachine
 
     void OnVoteEnd(bool vote_passed)
     {
+      if (!active_ || !GetVotesEnabled()) {
+        return;
+      }
       if (vote_passed) {
         admin_vm_.Restart();
       }
@@ -557,7 +568,7 @@ struct AdminVirtualMachine
 
     void OnVoteIdle()
     {
-      if (GetVotesEnabled()) {
+      if (active_ && GetVotesEnabled()) {
         VmUserChannel::BroadcastMessage(GetVoteStatus());
       }
     }

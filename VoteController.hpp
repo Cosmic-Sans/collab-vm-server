@@ -91,6 +91,8 @@ public:
         {
           if (ec || !static_cast<TBase&>(*this).GetVotesEnabled()) {
             vote_state_ = VoteState::kIdle;
+            static_cast<TBase&>(*this).OnVoteIdle();
+            static_cast<TBase&>(*this).OnVoteEnd(false);
             return;
           }
 

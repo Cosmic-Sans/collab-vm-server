@@ -1470,6 +1470,23 @@ namespace CollabVm::Server
           }
           break;
         }
+        case CollabVmClientMessage::Message::CANCEL_VOTE:
+        {
+          if (is_admin_ && connected_vm_id_)
+          {
+            server_.virtual_machines_.dispatch(
+              [vm_id = connected_vm_id_](auto& virtual_machines)
+              {
+                if (const auto virtual_machine =
+                      virtual_machines.GetAdminVirtualMachine(vm_id);
+                    virtual_machine)
+                {
+                  virtual_machine->CancelVote();
+                }
+              });
+          }
+          break;
+        }
         case CollabVmClientMessage::Message::RECORDING_PREVIEW_REQUEST:
         {
           if (is_admin_)
