@@ -20,6 +20,7 @@ struct IPData
    */
   struct ChannelData
   {
+    bool voted = false;
   };
 };
 } // namespace CollabVm::Server

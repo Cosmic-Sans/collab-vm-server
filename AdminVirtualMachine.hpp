@@ -533,10 +533,15 @@ struct AdminVirtualMachine
           && !user_data->get().IsRegistered()) {
         return;
       }
+      auto& ip_data_has_voted = user_data->get().ip_data.voted;
+      if (ip_data_has_voted) {
+        return;
+      }
       const auto vote_counted =
-        VmVoteController::AddVote(user_vote.value().get().vote_data, voted_yes);
+        VmVoteController::AddVote(user_data->get().vote_data, voted_yes);
       if (vote_counted) {
-          VmUserChannel::BroadcastMessage(GetVoteStatus());
+        ip_data_has_voted = true;
+        VmUserChannel::BroadcastMessage(GetVoteStatus());
       }
     }
 
@@ -562,6 +567,11 @@ struct AdminVirtualMachine
         (auto& user_data, auto& socket)
         {
           user_data.vote_data = {};
+          if constexpr (
+            !std::is_same_v<std::decay_t<decltype(user_data)>, typename TClient::UserData>)
+          {
+            user_data.ip_data.voted = false;
+          }
           socket.QueueMessage(message);
         });
     }
