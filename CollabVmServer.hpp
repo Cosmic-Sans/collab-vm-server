@@ -265,7 +265,7 @@ namespace CollabVm::Server
                 user_data.username = username;
                 user_data.user_type = GetUserType();
                 user_data.ip_address = TSocket::GetIpAddress().AsBytes();
-                channel.AddUser(user_data, std::move(self));
+                channel.AddUser(std::move(user_data), std::move(self));
               };
               if (channel_id == global_channel_id)
               {

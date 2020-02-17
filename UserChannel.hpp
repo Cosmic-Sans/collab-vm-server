@@ -1,3 +1,10 @@
+#pragma once
+
+#include <boost/functional/hash.hpp>
+#include <cstdint>
+#include <unordered_map>
+#include "IPData.hpp"
+
 namespace CollabVm::Server
 {
 template<typename TClient,
@@ -53,10 +60,12 @@ struct UserChannel
     }
   }
 
-  void AddUser(const TUserData& user_data, std::shared_ptr<TClient> user)
+  void AddUser(TUserData&& initial_user_data, std::shared_ptr<TClient> user)
   {
     OnAddUser(user);
-    users_.emplace(user, user_data);
+    auto& ip_data = ip_data_[initial_user_data.ip_address];
+    ip_data.reference_count_++;
+    auto& user_data = users_.emplace(user, UserData(std::move(initial_user_data), ip_data)).first->second;
     admins_count_ += !!(user_data.user_type == CollabVmServerMessage::UserType::ADMIN);
     user->QueueMessage(
       user_data.IsAdmin()
@@ -141,7 +150,10 @@ struct UserChannel
     if (user_it == users_.end()) {
       return;
     }
-    const auto& user_data = user_it->second;
+    auto& user_data = user_it->second;
+    if (!--user_data.ip_data.reference_count_) {
+      ip_data_.erase(user_data.ip_address);
+    }
     admins_count_ -= !!(user_data.user_type == CollabVmServerMessage::UserType::ADMIN);
 
     auto message = SocketMessage::CreateShared();
@@ -176,7 +188,7 @@ private:
     static_assert(std::is_same_v<
       std::remove_const_t<TUserChannel>, UserChannel>);
     using UserData = std::conditional_t<
-      std::is_const_v<TUserChannel>, const TUserData, TUserData>;
+      std::is_const_v<TUserChannel>, const UserData, UserData>;
     auto& users_ = user_channel.users_;
     auto user = users_.find(user_ptr);
     return user == users_.end()
@@ -224,7 +236,27 @@ private:
     }
   }
 
-  std::unordered_map<std::shared_ptr<TClient>, TUserData> users_;
+  struct ChannelIPData : IPData::ChannelData
+  {
+    std::size_t reference_count_ = 0;
+  };
+
+  struct UserData : TUserData
+  {
+    UserData(TUserData&& user_data, ChannelIPData& ip_data)
+      : TUserData(std::move(user_data)),
+        ip_data(ip_data)
+    {
+    }
+    ChannelIPData& ip_data;
+  };
+
+  std::unordered_map<std::shared_ptr<TClient>, UserData> users_;
+  std::unordered_map<
+      typename TClient::IpAddress::IpBytes,
+      ChannelIPData,
+      boost::hash<typename TClient::IpAddress::IpBytes>
+    > ip_data_;
   std::uint32_t admins_count_ = 0;
   CollabVmChatRoom<TClient,
 	                 CollabVm::Common::max_username_len,

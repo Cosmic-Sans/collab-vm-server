@@ -14,5 +14,12 @@ struct IPData
    * The number of active connections from the IP.
    */
   std::uint8_t connections = 0;
+
+  /**
+   * IP data associated with a VM.
+   */
+  struct ChannelData
+  {
+  };
 };
 } // namespace CollabVm::Server
