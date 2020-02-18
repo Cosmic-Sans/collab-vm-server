@@ -424,9 +424,12 @@ struct AdminVirtualMachine
         VmUserChannel::ForEachUser(
           [](auto& user_data, TClient& socket)
           {
-            // TODO: Send a channel disconnect message
-            // instead of closing the socket
-            socket.Close();
+            if (!user_data.IsRegistered())
+            {
+              // TODO: Send a channel disconnect message
+              // instead of closing the socket
+              socket.Close();
+            }
           });
       }
       const auto recordings_enabled =
