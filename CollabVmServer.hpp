@@ -300,9 +300,10 @@ namespace CollabVm::Server
                     virtual_machine->GetSettings(
                       [this, virtual_machine, connect_to_channel=std::move(connect_to_channel)]
                       (auto& settings) {
-                        if (settings.GetSetting(VmSetting::Setting::DISALLOW_GUESTS)
-                                    .getDisallowGuests()
-                            && !is_logged_in_)
+                        if (!settings.active_
+                            || (settings.GetSetting(VmSetting::Setting::DISALLOW_GUESTS)
+                                        .getDisallowGuests()
+                                && !is_logged_in_))
                         {
                           auto socket_message = SocketMessage::CreateShared();
                           auto& message_builder = socket_message->GetMessageBuilder();
